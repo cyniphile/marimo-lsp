@@ -2,7 +2,7 @@
   "$schema": "https://turbo.build/schema.json",
   "tasks": {
     "build:renderer": {
-      "outputs": ["dist/renderer.mjs", "dist/renderer.mjs.map"],
+      "outputs": ["dist/renderer.mjs", "dist/renderer.mjs.map", "dist/*.mjs"],
       "inputs": ["src/renderer/**", "vite.config.ts", "package.json"],
       "env": ["NODE_ENV", "MODE"]
     },

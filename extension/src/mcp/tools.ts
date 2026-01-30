@@ -1,53 +1,27 @@
-import { Effect, HashMap, Option } from "effect";
+import { Effect, Option } from "effect";
 import { MarimoNotebookDocument, type NotebookId } from "../schemas.ts";
 import { DatasourcesService } from "../services/datasources/DatasourcesService.ts";
 import { NotebookEditorRegistry } from "../services/NotebookEditorRegistry.ts";
-import { VariablesService } from "../services/variables/VariablesService.ts";
 import { VsCode } from "../services/VsCode.ts";
+import { VariablesService } from "../services/variables/VariablesService.ts";
+import type {
+  CellOutput,
+  NotebookInfo,
+  RunStaleResult,
+  TableInfo,
+  VariableDeclaration,
+  VariableValue,
+} from "./types.ts";
 
-/**
- * MCP Tool Definitions for exposing marimo notebook data to Claude Code
- */
-
-export interface NotebookInfo {
-  uri: string;
-  name: string;
-  cellCount: number;
-}
-
-export interface VariableDeclaration {
-  name: string;
-  declared_by: string[];
-  used_by: string[];
-}
-
-export interface VariableValue {
-  name: string;
-  value: string | null;
-  datatype: string | null;
-}
-
-export interface TableInfo {
-  name: string;
-  source: string;
-  source_type: "catalog" | "connection" | "duckdb" | "local";
-  num_rows: number | null;
-  num_columns: number | null;
-  variable_name: string | null;
-  columns: Array<{
-    name: string;
-    type: string;
-  }>;
-}
-
-export interface CellOutput {
-  cell_index: number;
-  cell_name: string | null;
-  outputs: Array<{
-    mime_type: string;
-    text: string | null;
-  }>;
-}
+// Re-export types for convenience
+export type {
+  CellOutput,
+  NotebookInfo,
+  RunStaleResult,
+  TableInfo,
+  VariableDeclaration,
+  VariableValue,
+};
 
 /**
  * List all open marimo notebooks
@@ -212,13 +186,6 @@ export function getCellOutputs(notebookUri: NotebookId) {
   });
 }
 
-export interface RunStaleResult {
-  success: boolean;
-  cells_triggered: number;
-  error?: string;
-  message?: string;
-}
-
 /**
  * Run all stale (changed) cells in a marimo notebook.
  * Triggers execution asynchronously - returns immediately.
@@ -248,9 +215,7 @@ export function runStale(notebookUri: NotebookId) {
       } as RunStaleResult;
     }
 
-    const staleCells = notebook.value
-      .getCells()
-      .filter((cell) => cell.isStale);
+    const staleCells = notebook.value.getCells().filter((cell) => cell.isStale);
     if (staleCells.length === 0) {
       return {
         success: true,

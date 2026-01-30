@@ -2,17 +2,16 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import { Effect, Queue, Runtime } from "effect";
 import type { NotebookId } from "../schemas.ts";
-import { DatasourcesService } from "../services/datasources/DatasourcesService.ts";
-import { NotebookEditorRegistry } from "../services/NotebookEditorRegistry.ts";
-import { VariablesService } from "../services/variables/VariablesService.ts";
-import { VsCode } from "../services/VsCode.ts";
+import type { DatasourcesService } from "../services/datasources/DatasourcesService.ts";
+import type { NotebookEditorRegistry } from "../services/NotebookEditorRegistry.ts";
+import type { VsCode } from "../services/VsCode.ts";
+import type { VariablesService } from "../services/variables/VariablesService.ts";
 import { Log } from "../utils/log.ts";
 import {
   getSocketPath,
   type IpcRequest,
   type IpcRequestBody,
   type IpcResponse,
-  type IpcResponseBody,
 } from "./ipc-client.ts";
 import {
   getCellOutputs,
@@ -24,7 +23,11 @@ import {
 } from "./tools.ts";
 
 // Re-export for convenience
-export { getSocketPath, type IpcRequest, type IpcResponse } from "./ipc-client.ts";
+export {
+  getSocketPath,
+  type IpcRequest,
+  type IpcResponse,
+} from "./ipc-client.ts";
 
 type IpcServerDeps =
   | NotebookEditorRegistry
@@ -59,7 +62,9 @@ function handleRequestBody(request: IpcRequestBody) {
         return { type: "get_tables" as const, tables };
       }
       case "get_cell_outputs": {
-        const outputs = yield* getCellOutputs(request.notebook_uri as NotebookId);
+        const outputs = yield* getCellOutputs(
+          request.notebook_uri as NotebookId,
+        );
         return { type: "get_cell_outputs" as const, outputs };
       }
       case "run_stale": {
@@ -197,9 +202,11 @@ function handleConnection(
                 try {
                   const request = JSON.parse(line) as IpcRequest;
                   const { id, ...body } = request;
-                  const responseBody = yield* handleRequestBody(body as IpcRequestBody);
+                  const responseBody = yield* handleRequestBody(
+                    body as IpcRequestBody,
+                  );
                   const response: IpcResponse = { ...responseBody, id };
-                  socket.write(JSON.stringify(response) + "\n");
+                  socket.write(`${JSON.stringify(response)}\n`);
                 } catch (error) {
                   const errorResponse: IpcResponse = {
                     type: "error",
@@ -207,7 +214,7 @@ function handleConnection(
                       error instanceof Error ? error.message : "Unknown error",
                     id: requestId,
                   };
-                  socket.write(JSON.stringify(errorResponse) + "\n");
+                  socket.write(`${JSON.stringify(errorResponse)}\n`);
                 }
               }),
             ).catch((error) => {
@@ -217,7 +224,7 @@ function handleConnection(
                   error instanceof Error ? error.message : "Unknown error",
                 id: requestId,
               };
-              socket.write(JSON.stringify(errorResponse) + "\n");
+              socket.write(`${JSON.stringify(errorResponse)}\n`);
             });
           }
         }

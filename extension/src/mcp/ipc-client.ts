@@ -1,77 +1,32 @@
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
+import type {
+  CellOutput,
+  IpcRequest,
+  IpcRequestBody,
+  IpcResponse,
+  IpcResponseBody,
+  NotebookInfo,
+  RunStaleResult,
+  TableInfo,
+  VariableDeclaration,
+  VariableValue,
+} from "./types.ts";
 
-/**
- * IPC Protocol Types (shared between client and server)
- */
-export type IpcRequestBody =
-  | { type: "list_notebooks" }
-  | { type: "get_variables"; notebook_uri: string }
-  | { type: "get_variable_values"; notebook_uri: string }
-  | { type: "get_tables"; notebook_uri: string }
-  | { type: "get_cell_outputs"; notebook_uri: string }
-  | { type: "run_stale"; notebook_uri: string };
-
-export type IpcRequest = IpcRequestBody & { id: number };
-
-export interface NotebookInfo {
-  uri: string;
-  name: string;
-  cellCount: number;
-}
-
-export interface VariableDeclaration {
-  name: string;
-  declared_by: string[];
-  used_by: string[];
-}
-
-export interface VariableValue {
-  name: string;
-  value: string | null;
-  datatype: string | null;
-}
-
-export interface TableInfo {
-  name: string;
-  source: string;
-  source_type: "catalog" | "connection" | "duckdb" | "local";
-  num_rows: number | null;
-  num_columns: number | null;
-  variable_name: string | null;
-  columns: Array<{
-    name: string;
-    type: string;
-  }>;
-}
-
-export interface CellOutput {
-  cell_index: number;
-  cell_name: string | null;
-  outputs: Array<{
-    mime_type: string;
-    text: string | null;
-  }>;
-}
-
-export interface RunStaleResult {
-  success: boolean;
-  cells_triggered: number;
-  error?: string;
-  message?: string;
-}
-
-export type IpcResponseBody =
-  | { type: "list_notebooks"; notebooks: NotebookInfo[] }
-  | { type: "get_variables"; variables: VariableDeclaration[] }
-  | { type: "get_variable_values"; variables: VariableValue[] }
-  | { type: "get_tables"; tables: TableInfo[] }
-  | { type: "get_cell_outputs"; outputs: CellOutput[] }
-  | { type: "run_stale"; result: RunStaleResult }
-  | { type: "error"; message: string };
-
-export type IpcResponse = IpcResponseBody & { id: number };
+// Re-export types for convenience
+export type {
+  CellOutput,
+  IpcRequest,
+  IpcRequestBody,
+  IpcResponse,
+  IpcResponseBody,
+  NotebookInfo,
+  RunStaleResult,
+  TableInfo,
+  VariableDeclaration,
+  VariableValue,
+};
 
 /**
  * Get the IPC socket/pipe path.
@@ -109,7 +64,10 @@ export class IpcClient {
   private responseBuffer = "";
   private pendingRequests: Map<
     number,
-    { resolve: (value: IpcResponseBody) => void; reject: (error: Error) => void }
+    {
+      resolve: (value: IpcResponseBody) => void;
+      reject: (error: Error) => void;
+    }
   > = new Map();
   private requestId = 0;
 
@@ -162,7 +120,7 @@ export class IpcClient {
 
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(id, { resolve, reject });
-      this.socket!.write(JSON.stringify(requestWithId) + "\n");
+      this.socket?.write(`${JSON.stringify(requestWithId)}\n`);
     });
   }
 

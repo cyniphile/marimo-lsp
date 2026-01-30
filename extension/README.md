@@ -62,6 +62,26 @@ By default, marimo provides managed Python language features (completions, diagn
 
 **When to disable managed mode:** If you prefer to use your own Python language server configuration (e.g., Pylance, pyright, or another LSP), enable `marimo.notebook.disableManagedLanguageFeatures`. This switches cells to use the standard `python` language ID, allowing external language servers to provide completions and diagnostics. Note that this may result in some language features not working as expected in the notebook context.
 
+## Claude Code Integration
+
+This extension includes an MCP (Model Context Protocol) server that allows
+[Claude Code](https://claude.ai/claude-code) to interact with your marimo notebooks:
+
+- **List open notebooks** - See all marimo notebooks open in VS Code
+- **Read variables** - View variable declarations and which cells use them
+- **Get variable values** - Access current values and types of variables
+- **View cell outputs** - Read stdout, stderr, and rendered outputs from cells
+- **Execute stale cells** - Run cells that have changed but not been executed
+
+### Security Considerations
+
+The MCP server communicates via a Unix domain socket (or named pipe on Windows)
+that is isolated per-user. Be aware that:
+
+- The socket path can be overridden via the `MARIMO_MCP_SOCKET` environment variable
+- Variable values may contain sensitive data from your notebooks
+- The `run_stale` command triggers code execution in your notebook
+
 ## Support
 
 - [marimo Documentation](https://docs.marimo.io/)
