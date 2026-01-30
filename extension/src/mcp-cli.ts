@@ -115,6 +115,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["notebook_uri"],
         },
       },
+      {
+        name: "run_stale",
+        description:
+          "Run all stale (changed) cells in a marimo notebook. Returns immediately - use get_cell_outputs to check results after execution completes.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            notebook_uri: {
+              type: "string",
+              description:
+                "The URI of the notebook (from list_notebooks output)",
+            },
+          },
+          required: ["notebook_uri"],
+        },
+      },
     ],
   };
 });
@@ -160,6 +176,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         });
         break;
 
+      case "run_stale":
+        response = await client.request({
+          type: "run_stale",
+          notebook_uri: (args as { notebook_uri: string }).notebook_uri,
+        });
+        break;
+
       default:
         return {
           content: [
@@ -201,6 +224,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case "get_cell_outputs":
         resultData = response.outputs;
+        break;
+      case "run_stale":
+        resultData = response.result;
         break;
     }
 

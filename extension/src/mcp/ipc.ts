@@ -5,6 +5,7 @@ import type { NotebookId } from "../schemas.ts";
 import { DatasourcesService } from "../services/datasources/DatasourcesService.ts";
 import { NotebookEditorRegistry } from "../services/NotebookEditorRegistry.ts";
 import { VariablesService } from "../services/variables/VariablesService.ts";
+import { VsCode } from "../services/VsCode.ts";
 import { Log } from "../utils/log.ts";
 import {
   getSocketPath,
@@ -19,6 +20,7 @@ import {
   getVariables,
   getVariableValues,
   listNotebooks,
+  runStale,
 } from "./tools.ts";
 
 // Re-export for convenience
@@ -27,7 +29,8 @@ export { getSocketPath, type IpcRequest, type IpcResponse } from "./ipc-client.t
 type IpcServerDeps =
   | NotebookEditorRegistry
   | VariablesService
-  | DatasourcesService;
+  | DatasourcesService
+  | VsCode;
 
 /**
  * Handle an IPC request and return a response body
@@ -58,6 +61,10 @@ function handleRequestBody(request: IpcRequestBody) {
       case "get_cell_outputs": {
         const outputs = yield* getCellOutputs(request.notebook_uri as NotebookId);
         return { type: "get_cell_outputs" as const, outputs };
+      }
+      case "run_stale": {
+        const result = yield* runStale(request.notebook_uri as NotebookId);
+        return { type: "run_stale" as const, result };
       }
     }
   });

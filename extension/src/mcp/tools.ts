@@ -1,8 +1,9 @@
 import { Effect, HashMap, Option } from "effect";
-import type { NotebookId } from "../schemas.ts";
+import { MarimoNotebookDocument, type NotebookId } from "../schemas.ts";
 import { DatasourcesService } from "../services/datasources/DatasourcesService.ts";
 import { NotebookEditorRegistry } from "../services/NotebookEditorRegistry.ts";
 import { VariablesService } from "../services/variables/VariablesService.ts";
+import { VsCode } from "../services/VsCode.ts";
 
 /**
  * MCP Tool Definitions for exposing marimo notebook data to Claude Code
@@ -211,10 +212,73 @@ export function getCellOutputs(notebookUri: NotebookId) {
   });
 }
 
+export interface RunStaleResult {
+  success: boolean;
+  cells_triggered: number;
+  error?: string;
+  message?: string;
+}
+
+/**
+ * Run all stale (changed) cells in a marimo notebook.
+ * Triggers execution asynchronously - returns immediately.
+ * Use get_cell_outputs to check results after execution completes.
+ */
+export function runStale(notebookUri: NotebookId) {
+  return Effect.gen(function* () {
+    const registry = yield* NotebookEditorRegistry;
+    const code = yield* VsCode;
+    const editorOpt = yield* registry.getNotebookEditor(notebookUri);
+
+    if (Option.isNone(editorOpt)) {
+      return {
+        success: false,
+        error: "Notebook not found",
+        cells_triggered: 0,
+      } as RunStaleResult;
+    }
+
+    const editor = editorOpt.value;
+    const notebook = MarimoNotebookDocument.tryFrom(editor.notebook);
+    if (Option.isNone(notebook)) {
+      return {
+        success: false,
+        error: "Not a marimo notebook",
+        cells_triggered: 0,
+      } as RunStaleResult;
+    }
+
+    const staleCells = notebook.value
+      .getCells()
+      .filter((cell) => cell.isStale);
+    if (staleCells.length === 0) {
+      return {
+        success: true,
+        cells_triggered: 0,
+        message: "No stale cells",
+      } as RunStaleResult;
+    }
+
+    // Trigger execution (async - returns immediately)
+    yield* code.commands.executeCommand("notebook.cell.execute", {
+      ranges: staleCells.map((cell) => ({
+        start: cell.index,
+        end: cell.index + 1,
+      })),
+    });
+
+    return {
+      success: true,
+      cells_triggered: staleCells.length,
+    } as RunStaleResult;
+  });
+}
+
 /**
  * The type of services required for MCP tools
  */
 export type McpToolsDeps =
   | NotebookEditorRegistry
   | VariablesService
-  | DatasourcesService;
+  | DatasourcesService
+  | VsCode;

@@ -10,7 +10,8 @@ export type IpcRequestBody =
   | { type: "get_variables"; notebook_uri: string }
   | { type: "get_variable_values"; notebook_uri: string }
   | { type: "get_tables"; notebook_uri: string }
-  | { type: "get_cell_outputs"; notebook_uri: string };
+  | { type: "get_cell_outputs"; notebook_uri: string }
+  | { type: "run_stale"; notebook_uri: string };
 
 export type IpcRequest = IpcRequestBody & { id: number };
 
@@ -54,12 +55,20 @@ export interface CellOutput {
   }>;
 }
 
+export interface RunStaleResult {
+  success: boolean;
+  cells_triggered: number;
+  error?: string;
+  message?: string;
+}
+
 export type IpcResponseBody =
   | { type: "list_notebooks"; notebooks: NotebookInfo[] }
   | { type: "get_variables"; variables: VariableDeclaration[] }
   | { type: "get_variable_values"; variables: VariableValue[] }
   | { type: "get_tables"; tables: TableInfo[] }
   | { type: "get_cell_outputs"; outputs: CellOutput[] }
+  | { type: "run_stale"; result: RunStaleResult }
   | { type: "error"; message: string };
 
 export type IpcResponse = IpcResponseBody & { id: number };
