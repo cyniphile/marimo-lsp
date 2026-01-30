@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "marimo": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/absolute/path/to/marimo-lsp/extension/dist/mcp-cli.js"]
+    }
+  }
+}

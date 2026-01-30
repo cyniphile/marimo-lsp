@@ -23,6 +23,7 @@ export type MarimoCommand =
   | "marimo.runStale"
   | "marimo.showDiagnostics"
   | "marimo.showMarimoMenu"
+  | "marimo.showMcpConfig"
   | "marimo.updateActivePythonEnvironment";
 
 export type MarimoView =

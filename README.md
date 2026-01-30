@@ -7,3 +7,17 @@ A language server and VS Code extension for
 [marimo](https://github.com/marimo-team/marimo).
 
 **[Learn more about the extension](extension/README.md)** | **[Contributing](CONTRIBUTING.md)**
+
+## Claude Code (MCP) setup
+
+This repo does not check in `.mcp.json` because it contains machine-specific
+paths.
+
+1) Install the VS Code extension.
+2) Run the command `Marimo: Show Claude Code MCP config` to open a JSON snippet
+   with the correct local path.
+3) Copy that snippet into your Claude Code MCP settings (or save it as
+   `.mcp.json` locally).
+
+If you're developing from source, run `pnpm -C extension build:mcp-cli` once
+before step 2.

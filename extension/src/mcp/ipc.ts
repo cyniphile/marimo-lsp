@@ -1,0 +1,228 @@
+import * as fs from "node:fs";
+import * as net from "node:net";
+import { Effect, Queue, Runtime } from "effect";
+import type { NotebookId } from "../schemas.ts";
+import { DatasourcesService } from "../services/datasources/DatasourcesService.ts";
+import { NotebookEditorRegistry } from "../services/NotebookEditorRegistry.ts";
+import { VariablesService } from "../services/variables/VariablesService.ts";
+import { Log } from "../utils/log.ts";
+import {
+  getSocketPath,
+  type IpcRequest,
+  type IpcRequestBody,
+  type IpcResponse,
+  type IpcResponseBody,
+} from "./ipc-client.ts";
+import {
+  getCellOutputs,
+  getTables,
+  getVariables,
+  getVariableValues,
+  listNotebooks,
+} from "./tools.ts";
+
+// Re-export for convenience
+export { getSocketPath, type IpcRequest, type IpcResponse } from "./ipc-client.ts";
+
+type IpcServerDeps =
+  | NotebookEditorRegistry
+  | VariablesService
+  | DatasourcesService;
+
+/**
+ * Handle an IPC request and return a response body
+ */
+function handleRequestBody(request: IpcRequestBody) {
+  return Effect.gen(function* () {
+    switch (request.type) {
+      case "list_notebooks": {
+        const notebooks = yield* listNotebooks();
+        return { type: "list_notebooks" as const, notebooks };
+      }
+      case "get_variables": {
+        const variables = yield* getVariables(
+          request.notebook_uri as NotebookId,
+        );
+        return { type: "get_variables" as const, variables };
+      }
+      case "get_variable_values": {
+        const variables = yield* getVariableValues(
+          request.notebook_uri as NotebookId,
+        );
+        return { type: "get_variable_values" as const, variables };
+      }
+      case "get_tables": {
+        const tables = yield* getTables(request.notebook_uri as NotebookId);
+        return { type: "get_tables" as const, tables };
+      }
+      case "get_cell_outputs": {
+        const outputs = yield* getCellOutputs(request.notebook_uri as NotebookId);
+        return { type: "get_cell_outputs" as const, outputs };
+      }
+    }
+  });
+}
+
+/**
+ * Check if a socket is in use by attempting to connect to it
+ */
+function isSocketInUse(socketPath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection(socketPath, () => {
+      // Connection succeeded - socket is in use
+      socket.destroy();
+      resolve(true);
+    });
+    socket.on("error", () => {
+      // Connection failed - socket is stale or doesn't exist
+      resolve(false);
+    });
+  });
+}
+
+/**
+ * Create the IPC server that listens for requests from the MCP CLI
+ */
+export function createIpcServer() {
+  return Effect.gen(function* () {
+    const socketPath = getSocketPath();
+
+    // Check if another instance is already using this socket
+    const inUse = yield* Effect.promise(() => isSocketInUse(socketPath));
+    if (inUse) {
+      yield* Log.warn(
+        "MCP IPC socket already in use by another VS Code instance",
+        { socketPath },
+      );
+      // Return without starting the server - another instance will handle MCP
+      return { socketPath, active: false };
+    }
+
+    // Clean up stale socket file if it exists
+    yield* Effect.sync(() => {
+      try {
+        fs.unlinkSync(socketPath);
+      } catch {
+        // Ignore errors if file doesn't exist
+      }
+    });
+
+    const server = net.createServer();
+    const connectionQueue = yield* Queue.unbounded<net.Socket>();
+
+    // Get the runtime so we can run effects inside socket handlers
+    const runtime = yield* Effect.runtime<IpcServerDeps>();
+
+    // Handle incoming connections
+    server.on("connection", (socket) => {
+      Runtime.runSync(runtime)(Queue.offer(connectionQueue, socket));
+    });
+
+    // Start listening
+    yield* Effect.async<void, Error>((resume) => {
+      server.listen(socketPath, () => {
+        resume(Effect.void);
+      });
+      server.on("error", (err) => {
+        resume(Effect.fail(err));
+      });
+    });
+
+    yield* Log.info("MCP IPC server started", { socketPath });
+
+    // Process connections in the background
+    yield* Effect.forkScoped(
+      Effect.gen(function* () {
+        while (true) {
+          const socket = yield* Queue.take(connectionQueue);
+          yield* Effect.fork(handleConnection(socket, runtime));
+        }
+      }),
+    );
+
+    // Register cleanup
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        server.close();
+        try {
+          fs.unlinkSync(socketPath);
+        } catch {
+          // Ignore cleanup errors
+        }
+      }),
+    );
+
+    return { socketPath, active: true };
+  });
+}
+
+/**
+ * Handle a single client connection
+ */
+function handleConnection(
+  socket: net.Socket,
+  runtime: Runtime.Runtime<IpcServerDeps>,
+) {
+  return Effect.gen(function* () {
+    let buffer = "";
+
+    yield* Effect.async<void, Error>((resume) => {
+      socket.on("data", (data) => {
+        buffer += data.toString();
+
+        // Process complete messages (newline-delimited JSON)
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (line.trim()) {
+            // Run the request handler with the runtime that has services
+            let requestId = 0;
+            try {
+              const parsed = JSON.parse(line) as IpcRequest;
+              requestId = parsed.id;
+            } catch {
+              // Will handle below
+            }
+
+            Runtime.runPromise(runtime)(
+              Effect.gen(function* () {
+                try {
+                  const request = JSON.parse(line) as IpcRequest;
+                  const { id, ...body } = request;
+                  const responseBody = yield* handleRequestBody(body as IpcRequestBody);
+                  const response: IpcResponse = { ...responseBody, id };
+                  socket.write(JSON.stringify(response) + "\n");
+                } catch (error) {
+                  const errorResponse: IpcResponse = {
+                    type: "error",
+                    message:
+                      error instanceof Error ? error.message : "Unknown error",
+                    id: requestId,
+                  };
+                  socket.write(JSON.stringify(errorResponse) + "\n");
+                }
+              }),
+            ).catch((error) => {
+              const errorResponse: IpcResponse = {
+                type: "error",
+                message:
+                  error instanceof Error ? error.message : "Unknown error",
+                id: requestId,
+              };
+              socket.write(JSON.stringify(errorResponse) + "\n");
+            });
+          }
+        }
+      });
+
+      socket.on("close", () => {
+        resume(Effect.void);
+      });
+
+      socket.on("error", (err) => {
+        resume(Effect.fail(err));
+      });
+    });
+  }).pipe(Effect.catchAll(() => Effect.void));
+}

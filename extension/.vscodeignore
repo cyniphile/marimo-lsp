@@ -13,6 +13,7 @@ vite.config.mjs
 .vscode-test
 .claude
 tests
+.mcp.json
 
 # Ignore sourcemap files (use ** to match all subdirectories)
 **/*.js.map

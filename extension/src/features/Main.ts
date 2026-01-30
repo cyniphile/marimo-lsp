@@ -22,6 +22,7 @@ import { SessionStateManager } from "../kernel/SessionStateManager.ts";
 import type { LanguageClient } from "../lsp/LanguageClient.ts";
 import type { RuffLanguageServer } from "../lsp/RuffLanguageServer.ts";
 import type { TyLanguageServer } from "../lsp/TyLanguageServer.ts";
+import { McpServerLive } from "../mcp/server.ts";
 import { CellMetadataUIBindingService } from "../notebook/CellMetadataUIBindingService.ts";
 import { CellStateManager } from "../notebook/CellStateManager.ts";
 import { NotebookEditorRegistry } from "../notebook/NotebookEditorRegistry.ts";
@@ -79,6 +80,7 @@ const MainLive = Layer.empty
     Layer.merge(ReloadOnConfigChangeLive),
     Layer.merge(ThemeSyncLive),
     Layer.merge(DebugLayerLive),
+    Layer.merge(McpServerLive),
   )
   .pipe(
     Layer.provideMerge(Api.Default),

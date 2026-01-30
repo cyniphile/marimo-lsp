@@ -12,6 +12,7 @@ import { restartKernel } from "../commands/restartKernel.ts";
 import { restartLsp } from "../commands/restartLsp.ts";
 import { runStale } from "../commands/runStale.ts";
 import { showDiagnostics } from "../commands/showDiagnostics.ts";
+import { showMcpConfig } from "../commands/showMcpConfig.ts";
 import { toggleAutoReload } from "../commands/toggleAutoReload.ts";
 import { toggleOnCellChange } from "../commands/toggleOnCellChange.ts";
 import { updateActivePythonEnvironment } from "../commands/updateActivePythonEnvironment.ts";
@@ -78,6 +79,8 @@ export const RegisterCommandsLive = Layer.scopedDiscard(
       "marimo.showDiagnostics",
       showDiagnostics,
     );
+
+    yield* code.commands.registerCommand("marimo.showMcpConfig", showMcpConfig);
 
     yield* code.commands.registerCommand("marimo.reportIssue", reportIssue);
 

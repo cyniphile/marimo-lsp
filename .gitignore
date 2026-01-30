@@ -12,6 +12,8 @@ extension/.vscode-test/
 .claude/*
 !.claude/skills/
 .claude/settings.local.json
+CLAUDE.md
+.mcp.json
 
 # Vendored reference source (populated by `just vendor-effect`)
 repos/

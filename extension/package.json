@@ -355,6 +355,11 @@
         "category": "marimo"
       },
       {
+        "command": "marimo.showMcpConfig",
+        "title": "Show Claude Code MCP config",
+        "category": "marimo"
+      },
+      {
         "command": "marimo.reportIssue",
         "title": "Report an issue or suggest a feature",
         "category": "marimo"
