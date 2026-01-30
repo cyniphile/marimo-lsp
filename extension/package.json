@@ -113,6 +113,11 @@
           "default": false,
           "markdownDescription": "Disable marimo's managed Python language features (completions, diagnostics, formatting). When enabled, notebook cells use the standard `python` language ID and rely on external language servers.",
           "scope": "resource"
+        },
+        "marimo.mcp.enableRunStale": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "**Security:** Allow the MCP server to execute notebook cells via the `run_stale` tool. When disabled (default), MCP clients like Claude Code can only read notebook data. Enable this only if you trust your MCP clients to execute code."
         }
       }
     },

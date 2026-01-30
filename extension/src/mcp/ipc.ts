@@ -4,7 +4,7 @@ import { Effect, Queue, Runtime } from "effect";
 import type { NotebookId } from "../schemas.ts";
 import type { DatasourcesService } from "../services/datasources/DatasourcesService.ts";
 import type { NotebookEditorRegistry } from "../services/NotebookEditorRegistry.ts";
-import type { VsCode } from "../services/VsCode.ts";
+import { VsCode } from "../services/VsCode.ts";
 import type { VariablesService } from "../services/variables/VariablesService.ts";
 import { Log } from "../utils/log.ts";
 import {
@@ -21,6 +21,7 @@ import {
   listNotebooks,
   runStale,
 } from "./tools.ts";
+import type { RunStaleResult } from "./types.ts";
 
 // Re-export for convenience
 export {
@@ -68,6 +69,21 @@ function handleRequestBody(request: IpcRequestBody) {
         return { type: "get_cell_outputs" as const, outputs };
       }
       case "run_stale": {
+        // Check if run_stale is enabled in settings (disabled by default for security)
+        const code = yield* VsCode;
+        const config = yield* code.workspace.getConfiguration("marimo.mcp");
+        const enableRunStale = config.get<boolean>("enableRunStale") ?? false;
+
+        if (!enableRunStale) {
+          const result: RunStaleResult = {
+            success: false,
+            cells_triggered: 0,
+            error:
+              "run_stale is disabled. Enable 'marimo.mcp.enableRunStale' in VS Code settings to allow MCP clients to execute notebook cells.",
+          };
+          return { type: "run_stale" as const, result };
+        }
+
         const result = yield* runStale(request.notebook_uri as NotebookId);
         return { type: "run_stale" as const, result };
       }

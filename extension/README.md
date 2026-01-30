@@ -53,6 +53,7 @@ icon in the editor title bar to open it as a notebook (see image above).
 | `marimo.disableUvIntegration`           | `boolean` | `false` | Disable uv integration features such as automatic package installation prompts.                                                                                                                     |
 | `marimo.disableManagedLanguageFeatures` | `boolean` | `false` | Disable marimo's managed Python language features (completions, diagnostics, formatting). When enabled, notebook cells use the standard `python` language ID and rely on external language servers. |
 | `marimo.telemetry`                      | `boolean` | `true`  | Anonymous usage data. This helps us prioritize features for the marimo VSCode extension.                                                                                                            |
+| `marimo.mcp.enableRunStale`             | `boolean` | `false` | Allow MCP clients (e.g., Claude Code) to execute notebook cells. Disabled by default for security.                                                                                                  |
 
 ### Language Features
 
@@ -71,7 +72,16 @@ This extension includes an MCP (Model Context Protocol) server that allows
 - **Read variables** - View variable declarations and which cells use them
 - **Get variable values** - Access current values and types of variables
 - **View cell outputs** - Read stdout, stderr, and rendered outputs from cells
-- **Execute stale cells** - Run cells that have changed but not been executed
+- **Execute stale cells** - Run cells that have changed but not been executed (requires opt-in)
+
+### Enabling Cell Execution
+
+By default, MCP clients can only read notebook data. To allow Claude Code to
+execute cells via `run_stale`, you must explicitly enable it:
+
+1. Open VS Code Settings (`Cmd+,` or `Ctrl+,`)
+2. Search for `marimo.mcp.enableRunStale`
+3. Check the box to enable
 
 ### Security Considerations
 
@@ -80,7 +90,7 @@ that is isolated per-user. Be aware that:
 
 - The socket path can be overridden via the `MARIMO_MCP_SOCKET` environment variable
 - Variable values may contain sensitive data from your notebooks
-- The `run_stale` command triggers code execution in your notebook
+- The `run_stale` command triggers code execution (disabled by default, requires opt-in)
 
 ## Support
 
