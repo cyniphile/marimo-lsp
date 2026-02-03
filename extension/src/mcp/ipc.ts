@@ -1,9 +1,9 @@
 import * as fs from "node:fs";
 import * as net from "node:net";
-import { Effect, Queue, Runtime } from "effect";
+import { Effect, Option, Queue, Runtime } from "effect";
 import type { NotebookId } from "../schemas.ts";
 import type { DatasourcesService } from "../services/datasources/DatasourcesService.ts";
-import type { NotebookEditorRegistry } from "../services/NotebookEditorRegistry.ts";
+import { NotebookEditorRegistry } from "../services/NotebookEditorRegistry.ts";
 import { VsCode } from "../services/VsCode.ts";
 import type { VariablesService } from "../services/variables/VariablesService.ts";
 import { Log } from "../utils/log.ts";
@@ -15,13 +15,38 @@ import {
 } from "./ipc-client.ts";
 import {
   getCellOutputs,
+  getNotebookStatus,
   getTables,
   getVariables,
   getVariableValues,
   listNotebooks,
+  runCells,
   runStale,
 } from "./tools.ts";
-import type { RunStaleResult } from "./types.ts";
+import type { RunCellsResult, RunStaleResult } from "./types.ts";
+
+/**
+ * Check if a notebook is open and running, return a helpful error message if not.
+ * Returns Option.none() if notebook is ready, Option.some(errorMessage) if not.
+ */
+function checkNotebookOpen(notebookUri: NotebookId) {
+  return Effect.gen(function* () {
+    const registry = yield* NotebookEditorRegistry;
+    const editorOpt = yield* registry.getNotebookEditor(notebookUri);
+
+    if (Option.isNone(editorOpt)) {
+      return Option.some(
+        `Notebook is not open or not running. To use MCP tools:\n` +
+          `1. Open the notebook in VS Code (click the marimo icon or use "Open as marimo notebook")\n` +
+          `2. Wait for the kernel to start (run a cell or wait for auto-instantiate)\n` +
+          `3. Use list_notebooks to verify it appears in the list\n` +
+          `Requested: ${notebookUri}`,
+      );
+    }
+
+    return Option.none();
+  });
+}
 
 // Re-export for convenience
 export {
@@ -47,45 +72,103 @@ function handleRequestBody(request: IpcRequestBody) {
         return { type: "list_notebooks" as const, notebooks };
       }
       case "get_variables": {
+        const notebookError = yield* checkNotebookOpen(
+          request.notebook_uri as NotebookId,
+        );
+        if (Option.isSome(notebookError)) {
+          return { type: "error" as const, message: notebookError.value };
+        }
         const variables = yield* getVariables(
           request.notebook_uri as NotebookId,
         );
         return { type: "get_variables" as const, variables };
       }
       case "get_variable_values": {
+        const notebookError = yield* checkNotebookOpen(
+          request.notebook_uri as NotebookId,
+        );
+        if (Option.isSome(notebookError)) {
+          return { type: "error" as const, message: notebookError.value };
+        }
         const variables = yield* getVariableValues(
           request.notebook_uri as NotebookId,
         );
         return { type: "get_variable_values" as const, variables };
       }
       case "get_tables": {
+        const notebookError = yield* checkNotebookOpen(
+          request.notebook_uri as NotebookId,
+        );
+        if (Option.isSome(notebookError)) {
+          return { type: "error" as const, message: notebookError.value };
+        }
         const tables = yield* getTables(request.notebook_uri as NotebookId);
         return { type: "get_tables" as const, tables };
       }
       case "get_cell_outputs": {
+        const notebookError = yield* checkNotebookOpen(
+          request.notebook_uri as NotebookId,
+        );
+        if (Option.isSome(notebookError)) {
+          return { type: "error" as const, message: notebookError.value };
+        }
         const outputs = yield* getCellOutputs(
           request.notebook_uri as NotebookId,
         );
         return { type: "get_cell_outputs" as const, outputs };
       }
+      case "get_notebook_status": {
+        const notebookError = yield* checkNotebookOpen(
+          request.notebook_uri as NotebookId,
+        );
+        if (Option.isSome(notebookError)) {
+          return { type: "error" as const, message: notebookError.value };
+        }
+        const status = yield* getNotebookStatus(
+          request.notebook_uri as NotebookId,
+        );
+        return { type: "get_notebook_status" as const, status };
+      }
       case "run_stale": {
-        // Check if run_stale is enabled in settings (disabled by default for security)
+        // Check if run is enabled in settings (disabled by default for security)
         const code = yield* VsCode;
         const config = yield* code.workspace.getConfiguration("marimo.mcp");
-        const enableRunStale = config.get<boolean>("enableRunStale") ?? false;
+        const enableRun = config.get<boolean>("enableRun") ?? false;
 
-        if (!enableRunStale) {
+        if (!enableRun) {
           const result: RunStaleResult = {
             success: false,
             cells_triggered: 0,
             error:
-              "run_stale is disabled. Enable 'marimo.mcp.enableRunStale' in VS Code settings to allow MCP clients to execute notebook cells.",
+              "Cell execution is disabled. Enable 'marimo.mcp.enableRun' in VS Code settings to allow MCP clients to execute notebook cells.",
           };
           return { type: "run_stale" as const, result };
         }
 
         const result = yield* runStale(request.notebook_uri as NotebookId);
         return { type: "run_stale" as const, result };
+      }
+      case "run_cells": {
+        // Check if run is enabled in settings (disabled by default for security)
+        const code = yield* VsCode;
+        const config = yield* code.workspace.getConfiguration("marimo.mcp");
+        const enableRun = config.get<boolean>("enableRun") ?? false;
+
+        if (!enableRun) {
+          const result: RunCellsResult = {
+            success: false,
+            cells_triggered: 0,
+            error:
+              "Cell execution is disabled. Enable 'marimo.mcp.enableRun' in VS Code settings to allow MCP clients to execute notebook cells.",
+          };
+          return { type: "run_cells" as const, result };
+        }
+
+        const result = yield* runCells(
+          request.notebook_uri as NotebookId,
+          request.cell_indices,
+        );
+        return { type: "run_cells" as const, result };
       }
     }
   });

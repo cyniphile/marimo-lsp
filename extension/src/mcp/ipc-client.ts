@@ -3,11 +3,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type {
   CellOutput,
+  CellStatus,
   IpcRequest,
   IpcRequestBody,
   IpcResponse,
   IpcResponseBody,
   NotebookInfo,
+  NotebookStatus,
+  RunCellsResult,
   RunStaleResult,
   TableInfo,
   VariableDeclaration,
@@ -17,11 +20,14 @@ import type {
 // Re-export types for convenience
 export type {
   CellOutput,
+  CellStatus,
   IpcRequest,
   IpcRequestBody,
   IpcResponse,
   IpcResponseBody,
   NotebookInfo,
+  NotebookStatus,
+  RunCellsResult,
   RunStaleResult,
   TableInfo,
   VariableDeclaration,
@@ -44,7 +50,9 @@ export function getSocketPath(): string {
   }
 
   // Use per-user socket to avoid collisions
-  const uid = process.getuid?.() ?? process.env.USER ?? "default";
+  // process.getuid() exists on Unix, USERNAME on Windows, USER on Unix
+  const uid =
+    process.getuid?.() ?? process.env.USER ?? process.env.USERNAME ?? "default";
 
   if (process.platform === "win32") {
     // Windows named pipe

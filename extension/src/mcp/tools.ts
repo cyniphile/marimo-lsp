@@ -1,12 +1,17 @@
-import { Effect, Option } from "effect";
+import * as path from "node:path";
+import { Duration, Effect, Option } from "effect";
 import { MarimoNotebookDocument, type NotebookId } from "../schemas.ts";
 import { DatasourcesService } from "../services/datasources/DatasourcesService.ts";
+import { ExecutionRegistry } from "../services/ExecutionRegistry.ts";
 import { NotebookEditorRegistry } from "../services/NotebookEditorRegistry.ts";
 import { VsCode } from "../services/VsCode.ts";
 import { VariablesService } from "../services/variables/VariablesService.ts";
 import type {
   CellOutput,
+  CellStatus,
   NotebookInfo,
+  NotebookStatus,
+  RunCellsResult,
   RunStaleResult,
   TableInfo,
   VariableDeclaration,
@@ -16,7 +21,10 @@ import type {
 // Re-export types for convenience
 export type {
   CellOutput,
+  CellStatus,
   NotebookInfo,
+  NotebookStatus,
+  RunCellsResult,
   RunStaleResult,
   TableInfo,
   VariableDeclaration,
@@ -33,7 +41,7 @@ export function listNotebooks() {
 
     const notebooks: NotebookInfo[] = [];
     for (const [uri, editor] of editors) {
-      const name = editor.notebook.uri.fsPath.split("/").pop() ?? "Untitled";
+      const name = path.basename(editor.notebook.uri.fsPath) || "Untitled";
       notebooks.push({
         uri,
         name,
@@ -144,6 +152,7 @@ export function getCellOutputs(notebookUri: NotebookId) {
                 "application/javascript",
                 "application/vnd.code.notebook.stdout",
                 "application/vnd.code.notebook.stderr",
+                "application/vnd.code.notebook.error",
                 "application/vnd.marimo.ui+json",
               ];
               if (
@@ -230,12 +239,197 @@ export function runStale(notebookUri: NotebookId) {
         start: cell.index,
         end: cell.index + 1,
       })),
+      document: editor.notebook.uri,
     });
 
     return {
       success: true,
       cells_triggered: staleCells.length,
     } as RunStaleResult;
+  });
+}
+
+/**
+ * Run specific cells by index in a marimo notebook.
+ * Triggers execution asynchronously - returns immediately.
+ * Use get_cell_outputs to check results after execution completes.
+ */
+export function runCells(notebookUri: NotebookId, cellIndices: number[]) {
+  return Effect.gen(function* () {
+    const registry = yield* NotebookEditorRegistry;
+    const code = yield* VsCode;
+    const editorOpt = yield* registry.getNotebookEditor(notebookUri);
+
+    if (Option.isNone(editorOpt)) {
+      return {
+        success: false,
+        error: "Notebook not found",
+        cells_triggered: 0,
+      } as RunCellsResult;
+    }
+
+    const editor = editorOpt.value;
+    const notebook = MarimoNotebookDocument.tryFrom(editor.notebook);
+    if (Option.isNone(notebook)) {
+      return {
+        success: false,
+        error: "Not a marimo notebook",
+        cells_triggered: 0,
+      } as RunCellsResult;
+    }
+
+    const totalCells = notebook.value.getCells().length;
+
+    // Validate cell indices
+    const invalidIndices = cellIndices.filter((i) => i < 0 || i >= totalCells);
+    if (invalidIndices.length > 0) {
+      return {
+        success: false,
+        error: `Invalid cell indices: ${invalidIndices.join(", ")}. Notebook has ${totalCells} cells (0-${totalCells - 1}).`,
+        cells_triggered: 0,
+      } as RunCellsResult;
+    }
+
+    // Dedupe and sort for deterministic execution order
+    const uniqueIndices = [...new Set(cellIndices)].sort((a, b) => a - b);
+
+    if (uniqueIndices.length === 0) {
+      return {
+        success: true,
+        cells_triggered: 0,
+      } as RunCellsResult;
+    }
+
+    // Trigger execution (async - returns immediately)
+    yield* code.commands.executeCommand("notebook.cell.execute", {
+      ranges: uniqueIndices.map((i) => ({
+        start: i,
+        end: i + 1,
+      })),
+      document: editor.notebook.uri,
+    });
+
+    return {
+      success: true,
+      cells_triggered: uniqueIndices.length,
+    } as RunCellsResult;
+  });
+}
+
+type ExecutionState = "pending" | "running" | "completed" | "none";
+
+/**
+ * Try to get execution states from the registry with a timeout.
+ * Returns empty map if ExecutionRegistry isn't available or times out.
+ */
+function tryGetExecutionStates(): Effect.Effect<
+  Map<string, ExecutionState>,
+  never,
+  never
+> {
+  return Effect.serviceOption(ExecutionRegistry).pipe(
+    Effect.flatMap((registryOpt) =>
+      Option.match(registryOpt, {
+        onNone: () => Effect.succeed(new Map<string, ExecutionState>()),
+        onSome: (registry) =>
+          registry.getCellExecutionStates().pipe(
+            Effect.timeoutTo({
+              duration: Duration.millis(100),
+              onTimeout: () => new Map<string, ExecutionState>(),
+              onSuccess: (map) => map,
+            }),
+            Effect.catchAll(() =>
+              Effect.succeed(new Map<string, ExecutionState>()),
+            ),
+          ),
+      }),
+    ),
+  );
+}
+
+/**
+ * Get notebook execution status (which cells are running, queued, stale)
+ */
+export function getNotebookStatus(notebookUri: NotebookId) {
+  return Effect.gen(function* () {
+    const registry = yield* NotebookEditorRegistry;
+    const editorOpt = yield* registry.getNotebookEditor(notebookUri);
+
+    if (Option.isNone(editorOpt)) {
+      return {
+        cells: [],
+        is_busy: false,
+        running_count: 0,
+        queued_count: 0,
+        stale_count: 0,
+      } as NotebookStatus;
+    }
+
+    const editor = editorOpt.value;
+    const cells: CellStatus[] = [];
+    let runningCount = 0;
+    let queuedCount = 0;
+    let staleCount = 0;
+
+    // Try to get execution states (with timeout to avoid blocking)
+    const executionStates = yield* tryGetExecutionStates();
+
+    // Access raw cells directly
+    const rawCells = editor.notebook.getCells();
+
+    for (let i = 0; i < rawCells.length; i++) {
+      const cell = rawCells[i];
+
+      let state: "idle" | "queued" | "running" | "stale" | "unknown" = "idle";
+      let cellName: string | null = null;
+
+      try {
+        const metadata = cell.metadata as
+          | { state?: string; name?: string; stableId?: string }
+          | undefined;
+        cellName = metadata?.name ?? null;
+
+        // First check execution registry for running/pending state
+        const stableId = metadata?.stableId;
+        if (stableId && executionStates.size > 0) {
+          const execState = executionStates.get(stableId);
+          if (execState === "running") {
+            state = "running";
+          } else if (execState === "pending") {
+            state = "queued";
+          }
+        }
+
+        // If not running/queued, check metadata for stale state
+        if (state === "idle") {
+          const rawState = metadata?.state;
+          if (rawState === "stale") {
+            state = "stale";
+          }
+        }
+      } catch {
+        // Ignore metadata parsing errors
+        state = "unknown";
+      }
+
+      cells.push({
+        cell_index: i,
+        cell_name: cellName,
+        state,
+      });
+
+      if (state === "running") runningCount++;
+      if (state === "queued") queuedCount++;
+      if (state === "stale") staleCount++;
+    }
+
+    return {
+      cells,
+      is_busy: runningCount > 0 || queuedCount > 0,
+      running_count: runningCount,
+      queued_count: queuedCount,
+      stale_count: staleCount,
+    } as NotebookStatus;
   });
 }
 

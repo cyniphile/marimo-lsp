@@ -31,8 +31,9 @@ let ipcClient: IpcClient | null = null;
 
 async function ensureConnected(): Promise<IpcClient> {
   if (!ipcClient) {
-    ipcClient = new IpcClient();
-    await ipcClient.connect();
+    const client = new IpcClient();
+    await client.connect();
+    ipcClient = client;
   }
   return ipcClient;
 }
@@ -70,7 +71,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "get_variable_values",
         description:
-          "Get current variable values for a specific marimo notebook. Returns the name, value, and datatype of each variable.",
+          "Get current variable values for a specific marimo notebook. Returns the name, value, and datatype of each variable. Note: Large DataFrames will show truncated representations. If you need to inspect large data, first add a summary cell (df.head(), df.describe()) to the notebook and run it.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -86,7 +87,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "get_tables",
         description:
-          "Get dataset/table metadata for a specific marimo notebook. Returns table names, sources, row/column counts, and column definitions.",
+          "Get dataset/table metadata for a specific marimo notebook. Returns table names, sources, row/column counts, and column definitions. Use this FIRST to check data sizes before trying to inspect full outputs - if a table has many rows, add filtering/summary cells to the notebook instead of loading raw data.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -102,7 +103,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "get_cell_outputs",
         description:
-          "Get cell outputs for a specific marimo notebook. Returns the stdout/stderr and other outputs from each cell after execution.",
+          "Get cell outputs for a specific marimo notebook. Returns the stdout/stderr and other outputs from each cell after execution. WARNING: Can return very large results if cells output large DataFrames or long logs. If outputs are too large, edit the notebook to add summary/filter cells (e.g., df.head(10), df.describe()) and run those instead of trying to load raw data.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -119,6 +120,44 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "run_stale",
         description:
           "Run all stale (changed) cells in a marimo notebook. Returns immediately - use get_cell_outputs to check results after execution completes.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            notebook_uri: {
+              type: "string",
+              description:
+                "The URI of the notebook (from list_notebooks output)",
+            },
+          },
+          required: ["notebook_uri"],
+        },
+      },
+      {
+        name: "run_cells",
+        description:
+          "Run specific cells by index in a marimo notebook. Returns immediately - use get_cell_outputs to check results after execution completes.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            notebook_uri: {
+              type: "string",
+              description:
+                "The URI of the notebook (from list_notebooks output)",
+            },
+            cell_indices: {
+              type: "array",
+              items: { type: "number" },
+              description:
+                "Array of cell indices to run (0-based). Use list_notebooks to get cell count.",
+            },
+          },
+          required: ["notebook_uri", "cell_indices"],
+        },
+      },
+      {
+        name: "get_notebook_status",
+        description:
+          "Get execution status for a marimo notebook. Returns cell states (idle, queued, running, stale) and counts. Use this after run_stale or run_cells to check if execution has completed (is_busy = false means all cells finished).",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -183,6 +222,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         });
         break;
 
+      case "run_cells":
+        response = await client.request({
+          type: "run_cells",
+          notebook_uri: (
+            args as { notebook_uri: string; cell_indices: number[] }
+          ).notebook_uri,
+          cell_indices: (
+            args as { notebook_uri: string; cell_indices: number[] }
+          ).cell_indices,
+        });
+        break;
+
+      case "get_notebook_status":
+        response = await client.request({
+          type: "get_notebook_status",
+          notebook_uri: (args as { notebook_uri: string }).notebook_uri,
+        });
+        break;
+
       default:
         return {
           content: [
@@ -227,6 +285,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case "run_stale":
         resultData = response.result;
+        break;
+      case "run_cells":
+        resultData = response.result;
+        break;
+      case "get_notebook_status":
+        resultData = response.status;
         break;
     }
 

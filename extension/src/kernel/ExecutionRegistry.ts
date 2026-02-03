@@ -207,6 +207,27 @@ export class ExecutionRegistry extends Effect.Service<ExecutionRegistry>()(
             ),
             Effect.annotateLogs({ cellId: extractCellIdFromCellMessage(msg) }),
           ),
+        /**
+         * Get execution states for all cells tracked by this registry.
+         * Returns a map of cell id to execution state ("pending", "running", "completed", or "none").
+         */
+        getCellExecutionStates: () =>
+          Ref.get(ref).pipe(
+            Effect.map((map) => {
+              const result = new Map<
+                string,
+                "pending" | "running" | "completed" | "none"
+              >();
+              HashMap.forEach(map, (entry, cellId) => {
+                const state = Option.match(entry.pendingExecution, {
+                  onNone: () => "none" as const,
+                  onSome: (exec) => exec.kind,
+                });
+                result.set(cellId, state);
+              });
+              return result;
+            }),
+          ),
       };
     }),
   },

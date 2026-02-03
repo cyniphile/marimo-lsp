@@ -71,6 +71,39 @@ export interface RunStaleResult {
 }
 
 /**
+ * Result of running specific cells
+ */
+export interface RunCellsResult {
+  success: boolean;
+  cells_triggered: number;
+  error?: string;
+}
+
+/**
+ * Execution status of a single cell
+ */
+export interface CellStatus {
+  cell_index: number;
+  cell_name: string | null;
+  state: "idle" | "queued" | "running" | "stale" | "unknown";
+}
+
+/**
+ * Notebook execution status
+ */
+export interface NotebookStatus {
+  cells: CellStatus[];
+  /** True if any cells are running or queued */
+  is_busy: boolean;
+  /** Number of cells currently running */
+  running_count: number;
+  /** Number of cells queued for execution */
+  queued_count: number;
+  /** Number of stale cells that need re-execution */
+  stale_count: number;
+}
+
+/**
  * IPC request body types (without the id field)
  */
 export type IpcRequestBody =
@@ -79,7 +112,9 @@ export type IpcRequestBody =
   | { type: "get_variable_values"; notebook_uri: string }
   | { type: "get_tables"; notebook_uri: string }
   | { type: "get_cell_outputs"; notebook_uri: string }
-  | { type: "run_stale"; notebook_uri: string };
+  | { type: "get_notebook_status"; notebook_uri: string }
+  | { type: "run_stale"; notebook_uri: string }
+  | { type: "run_cells"; notebook_uri: string; cell_indices: number[] };
 
 /**
  * IPC request with id for request/response correlation
@@ -95,7 +130,9 @@ export type IpcResponseBody =
   | { type: "get_variable_values"; variables: VariableValue[] }
   | { type: "get_tables"; tables: TableInfo[] }
   | { type: "get_cell_outputs"; outputs: CellOutput[] }
+  | { type: "get_notebook_status"; status: NotebookStatus }
   | { type: "run_stale"; result: RunStaleResult }
+  | { type: "run_cells"; result: RunCellsResult }
   | { type: "error"; message: string };
 
 /**

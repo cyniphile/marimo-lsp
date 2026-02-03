@@ -9,7 +9,7 @@ import {
 import type { NotebookId } from "../../schemas.ts";
 import { NotebookEditorRegistry } from "../../services/NotebookEditorRegistry.ts";
 import { VsCode } from "../../services/VsCode.ts";
-import { getCellOutputs, runStale } from "../tools.ts";
+import { getCellOutputs, getNotebookStatus, runCells, runStale } from "../tools.ts";
 
 function makeLayer(vscode: TestVsCode) {
   return Layer.empty.pipe(
@@ -247,11 +247,322 @@ it.effect(
       (e) => e.command === "notebook.cell.execute",
     );
     expect(executeCall).toBeDefined();
-    expect(executeCall?.args[0]).toEqual({
+    expect(executeCall?.args[0]).toMatchObject({
       ranges: [
         { start: 0, end: 1 },
         { start: 2, end: 3 },
       ],
     });
+  }),
+);
+
+it.effect(
+  "runCells returns error when notebook is not found",
+  Effect.fnUntraced(function* () {
+    const vscode = yield* TestVsCode.make();
+
+    const result = yield* Effect.provide(
+      runCells("file:///missing.ipynb" as NotebookId, [0, 1]),
+      makeLayer(vscode),
+    );
+
+    expect(result).toEqual({
+      success: false,
+      error: "Notebook not found",
+      cells_triggered: 0,
+    });
+  }),
+);
+
+it.effect(
+  "runCells returns success with zero cells when empty array passed",
+  Effect.fnUntraced(function* () {
+    const vscode = yield* TestVsCode.make();
+
+    const result = yield* Effect.provide(
+      Effect.gen(function* () {
+        const code = yield* VsCode;
+
+        const notebookData = {
+          cells: [
+            {
+              kind: 2,
+              value: "x = 1",
+              languageId: "python",
+              metadata: { cellId: "cell1" },
+            },
+          ],
+        };
+
+        const notebook = createTestNotebookDocument(
+          code.Uri.file("/test/notebook.py"),
+          { data: notebookData },
+        );
+        const editor = createTestNotebookEditor(notebook);
+
+        yield* vscode.setActiveNotebookEditor(Option.some(editor));
+        yield* TestClock.adjust("10 millis");
+
+        return yield* runCells(notebook.uri.toString() as NotebookId, []);
+      }),
+      makeLayer(vscode),
+    );
+
+    expect(result).toEqual({
+      success: true,
+      cells_triggered: 0,
+    });
+  }),
+);
+
+it.effect(
+  "runCells returns error for invalid cell indices",
+  Effect.fnUntraced(function* () {
+    const vscode = yield* TestVsCode.make();
+
+    const result = yield* Effect.provide(
+      Effect.gen(function* () {
+        const code = yield* VsCode;
+
+        const notebookData = {
+          cells: [
+            {
+              kind: 2,
+              value: "x = 1",
+              languageId: "python",
+              metadata: { cellId: "cell1" },
+            },
+            {
+              kind: 2,
+              value: "y = 2",
+              languageId: "python",
+              metadata: { cellId: "cell2" },
+            },
+          ],
+        };
+
+        const notebook = createTestNotebookDocument(
+          code.Uri.file("/test/notebook.py"),
+          { data: notebookData },
+        );
+        const editor = createTestNotebookEditor(notebook);
+
+        yield* vscode.setActiveNotebookEditor(Option.some(editor));
+        yield* TestClock.adjust("10 millis");
+
+        // Try to run cell index 5 which doesn't exist (only 2 cells)
+        return yield* runCells(notebook.uri.toString() as NotebookId, [0, 5]);
+      }),
+      makeLayer(vscode),
+    );
+
+    expect(result).toEqual({
+      success: false,
+      error: "Invalid cell indices: 5. Notebook has 2 cells (0-1).",
+      cells_triggered: 0,
+    });
+  }),
+);
+
+it.effect(
+  "runCells triggers execution for specified cells",
+  Effect.fnUntraced(function* () {
+    const vscode = yield* TestVsCode.make();
+
+    const result = yield* Effect.provide(
+      Effect.gen(function* () {
+        const code = yield* VsCode;
+
+        const notebookData = {
+          cells: [
+            {
+              kind: 2,
+              value: "x = 1",
+              languageId: "python",
+              metadata: { cellId: "cell1" },
+            },
+            {
+              kind: 2,
+              value: "y = 2",
+              languageId: "python",
+              metadata: { cellId: "cell2" },
+            },
+            {
+              kind: 2,
+              value: "z = 3",
+              languageId: "python",
+              metadata: { cellId: "cell3" },
+            },
+          ],
+        };
+
+        const notebook = createTestNotebookDocument(
+          code.Uri.file("/test/notebook.py"),
+          { data: notebookData },
+        );
+        const editor = createTestNotebookEditor(notebook);
+
+        yield* vscode.setActiveNotebookEditor(Option.some(editor));
+        yield* TestClock.adjust("10 millis");
+
+        // Run cells 0 and 2 (skipping cell 1)
+        return yield* runCells(notebook.uri.toString() as NotebookId, [0, 2]);
+      }),
+      makeLayer(vscode),
+    );
+
+    expect(result).toEqual({
+      success: true,
+      cells_triggered: 2,
+    });
+
+    // Verify that notebook.cell.execute was called with correct ranges
+    const executions = yield* Ref.get(vscode.executions);
+    const executeCall = executions.find(
+      (e) => e.command === "notebook.cell.execute",
+    );
+    expect(executeCall).toBeDefined();
+    expect(executeCall?.args[0]).toMatchObject({
+      ranges: [
+        { start: 0, end: 1 },
+        { start: 2, end: 3 },
+      ],
+    });
+  }),
+);
+
+it.effect(
+  "getNotebookStatus returns empty status when notebook is not found",
+  Effect.fnUntraced(function* () {
+    const vscode = yield* TestVsCode.make();
+
+    const status = yield* Effect.provide(
+      getNotebookStatus("file:///missing.ipynb" as NotebookId),
+      makeLayer(vscode),
+    );
+
+    expect(status).toEqual({
+      cells: [],
+      is_busy: false,
+      running_count: 0,
+      queued_count: 0,
+      stale_count: 0,
+    });
+  }),
+);
+
+it.effect(
+  "getNotebookStatus returns cell states and counts",
+  Effect.fnUntraced(function* () {
+    const vscode = yield* TestVsCode.make();
+
+    const status = yield* Effect.provide(
+      Effect.gen(function* () {
+        const code = yield* VsCode;
+
+        // Create a notebook with cells - only "stale" is reliably detectable from metadata
+        const notebookData = {
+          cells: [
+            {
+              kind: 2,
+              value: "x = 1",
+              languageId: "python",
+              metadata: { name: "cell_a" },
+            },
+            {
+              kind: 2,
+              value: "y = 2",
+              languageId: "python",
+              metadata: {},
+            },
+            {
+              kind: 2,
+              value: "z = 3",
+              languageId: "python",
+              metadata: { state: "stale", name: "cell_c" },
+            },
+            {
+              kind: 2,
+              value: "w = 4",
+              languageId: "python",
+              metadata: {},
+            },
+          ],
+        };
+
+        const notebook = createTestNotebookDocument(
+          code.Uri.file("/test/notebook.py"),
+          { data: notebookData },
+        );
+        const editor = createTestNotebookEditor(notebook);
+
+        yield* vscode.setActiveNotebookEditor(Option.some(editor));
+        yield* TestClock.adjust("10 millis");
+
+        return yield* getNotebookStatus(notebook.uri.toString() as NotebookId);
+      }),
+      makeLayer(vscode),
+    );
+
+    // Only stale state is detectable from metadata; others show as idle
+    expect(status).toEqual({
+      cells: [
+        { cell_index: 0, cell_name: "cell_a", state: "idle" },
+        { cell_index: 1, cell_name: null, state: "idle" },
+        { cell_index: 2, cell_name: "cell_c", state: "stale" },
+        { cell_index: 3, cell_name: null, state: "idle" },
+      ],
+      is_busy: false,
+      running_count: 0,
+      queued_count: 0,
+      stale_count: 1,
+    });
+  }),
+);
+
+it.effect(
+  "getNotebookStatus returns is_busy=false when no cells are running or queued",
+  Effect.fnUntraced(function* () {
+    const vscode = yield* TestVsCode.make();
+
+    const status = yield* Effect.provide(
+      Effect.gen(function* () {
+        const code = yield* VsCode;
+
+        const notebookData = {
+          cells: [
+            {
+              kind: 2,
+              value: "x = 1",
+              languageId: "python",
+              metadata: { state: "idle" },
+            },
+            {
+              kind: 2,
+              value: "y = 2",
+              languageId: "python",
+              metadata: { state: "stale" },
+            },
+          ],
+        };
+
+        const notebook = createTestNotebookDocument(
+          code.Uri.file("/test/notebook.py"),
+          { data: notebookData },
+        );
+        const editor = createTestNotebookEditor(notebook);
+
+        yield* vscode.setActiveNotebookEditor(Option.some(editor));
+        yield* TestClock.adjust("10 millis");
+
+        return yield* getNotebookStatus(notebook.uri.toString() as NotebookId);
+      }),
+      makeLayer(vscode),
+    );
+
+    expect(status.is_busy).toBe(false);
+    expect(status.running_count).toBe(0);
+    expect(status.queued_count).toBe(0);
+    expect(status.stale_count).toBe(1);
   }),
 );
