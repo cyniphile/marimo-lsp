@@ -6,7 +6,6 @@ import type { DatasourcesService } from "../services/datasources/DatasourcesServ
 import { NotebookEditorRegistry } from "../services/NotebookEditorRegistry.ts";
 import { VsCode } from "../services/VsCode.ts";
 import type { VariablesService } from "../services/variables/VariablesService.ts";
-import { Log } from "../utils/log.ts";
 import {
   getSocketPath,
   type IpcRequest,
@@ -201,10 +200,9 @@ export function createIpcServer() {
     // Check if another instance is already using this socket
     const inUse = yield* Effect.promise(() => isSocketInUse(socketPath));
     if (inUse) {
-      yield* Log.warn(
+      yield* Effect.logWarning(
         "MCP IPC socket already in use by another VS Code instance",
-        { socketPath },
-      );
+      ).pipe(Effect.annotateLogs({ socketPath }));
       // Return without starting the server - another instance will handle MCP
       return { socketPath, active: false };
     }
@@ -239,7 +237,9 @@ export function createIpcServer() {
       });
     });
 
-    yield* Log.info("MCP IPC server started", { socketPath });
+    yield* Effect.logInfo("MCP IPC server started").pipe(
+      Effect.annotateLogs({ socketPath }),
+    );
 
     // Process connections in the background
     yield* Effect.forkScoped(

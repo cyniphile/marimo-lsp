@@ -1,5 +1,4 @@
 import { Effect, Layer } from "effect";
-import { Log } from "../utils/log.ts";
 import { createIpcServer } from "./ipc.ts";
 
 /**
@@ -15,7 +14,9 @@ export const McpServerLive = Layer.scopedDiscard(
   Effect.gen(function* () {
     const { socketPath, active } = yield* createIpcServer();
     if (active) {
-      yield* Log.info("MCP Server initialized", { socketPath });
+      yield* Effect.logInfo("MCP Server initialized").pipe(
+        Effect.annotateLogs({ socketPath }),
+      );
     }
   }),
 );

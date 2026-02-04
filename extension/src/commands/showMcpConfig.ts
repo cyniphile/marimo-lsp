@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import { ExtensionContext } from "../services/Storage.ts";
 import { VsCode } from "../services/VsCode.ts";
 
-export const showMcpConfig = Effect.fn(function* () {
+export const showMcpConfig = Effect.fn("command.showMcpConfig")(function* () {
   const code = yield* VsCode;
   const extensionContext = yield* ExtensionContext;
 

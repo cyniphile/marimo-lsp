@@ -9,7 +9,12 @@ import {
 import type { NotebookId } from "../../schemas.ts";
 import { NotebookEditorRegistry } from "../../services/NotebookEditorRegistry.ts";
 import { VsCode } from "../../services/VsCode.ts";
-import { getCellOutputs, getNotebookStatus, runCells, runStale } from "../tools.ts";
+import {
+  getCellOutputs,
+  getNotebookStatus,
+  runCells,
+  runStale,
+} from "../tools.ts";
 
 function makeLayer(vscode: TestVsCode) {
   return Layer.empty.pipe(
