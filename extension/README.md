@@ -41,6 +41,7 @@ icon in the editor title bar to open it as a notebook (see image above).
 | `marimo: Restart marimo language server (marimo-lsp)`     | Restart the LSP server if it becomes unresponsive                         |
 | `marimo: Report an issue or suggest a feature`            | Open GitHub to report bugs or request features                            |
 | `marimo: Show diagnostics`                                | Display diagnostic information for troubleshooting                        |
+| `marimo: Show Claude Code MCP config`                     | Show MCP config snippet for Claude Code                                   |
 
 ## Configuration
 

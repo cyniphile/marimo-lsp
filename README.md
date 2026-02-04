@@ -15,9 +15,13 @@ paths.
 
 1) Install the VS Code extension.
 2) Run the command `Marimo: Show Claude Code MCP config` to open a JSON snippet
-   with the correct local path.
+   with the correct local path (it copies the MCP CLI into VS Code's global
+   storage for a stable path).
 3) Copy that snippet into your Claude Code MCP settings (or save it as
    `.mcp.json` locally).
 
 If you're developing from source, run `pnpm -C extension build:mcp-cli` once
 before step 2.
+
+The config uses VS Code's bundled Node runtime, so users don't need a separate
+Node installation just for MCP.

@@ -172,3 +172,49 @@ The notebook/kernel-shaped pieces:
 The key property is that a single kernel operation can feed multiple services
 at once (e.g. `cell-op` drives execution state *and* updates visible output),
 and services can be added or swapped without changing the transport layer.
+
+## MCP (Claude Code) Integration
+
+The VS Code extension also hosts a local MCP (Model Context Protocol) bridge so
+MCP-compatible clients (like Claude Code) can read notebook state and
+optionally execute cells.
+
+```
+┌───────────────┐   STDIO (JSON-RPC)   ┌──────────────┐   IPC (local socket)   ┌──────────────────────┐
+│  MCP Client   │ ◄──────────────────►│   MCP CLI    │ ◄────────────────────►│  VS Code Extension   │
+│ (Claude Code) │                     │  (Node.js)   │                        │  (Effect services)   │
+└───────────────┘                     └──────────────┘                        └──────────────────────┘
+                                                                              │ NotebookEditorRegistry │
+                                                                              │ VariablesService        │
+                                                                              │ DatasourcesService      │
+                                                                              │ ExecutionRegistry       │
+                                                                              └─────────────────────────┘
+```
+
+### Components
+
+- **MCP CLI**: A standalone Node.js CLI (`dist/mcp-cli.js`) launched by the MCP
+  client over STDIO using `@modelcontextprotocol/sdk`.
+- **IPC Server**: A local socket server started by the extension on activation.
+  The CLI connects to it using newline-delimited JSON messages.
+- **Extension Services**: MCP tools read from existing in-memory services
+  (variables, datasources, execution state) without re-querying the kernel.
+
+### Tools (high level)
+
+- `list_notebooks`, `get_variables`, `get_variable_values`, `get_tables`,
+  `get_cell_outputs`, `get_notebook_status`
+- `run_stale`, `run_cells` (disabled by default; guarded by
+  `marimo.mcp.enableRun`)
+
+### Transport details
+
+- **STDIO**: The MCP client talks to the CLI via stdio pipes (JSON-RPC).
+- **IPC**: The CLI talks to the extension via a local Unix domain socket (macOS/Linux)
+  or a named pipe (Windows). The socket path is per-user and can be overridden
+  via `MARIMO_MCP_SOCKET`.
+
+### Operational notes
+
+- MCP only works for notebooks opened as marimo notebooks in VS Code.
+- Only one VS Code window per user can bind the MCP socket at a time.
