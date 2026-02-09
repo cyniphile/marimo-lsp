@@ -7,6 +7,7 @@ import {
   TestVsCode,
 } from "../../__mocks__/TestVsCode.ts";
 import type { NotebookId } from "../../schemas.ts";
+import { ControllerRegistry } from "../../services/ControllerRegistry.ts";
 import { NotebookEditorRegistry } from "../../services/NotebookEditorRegistry.ts";
 import { VsCode } from "../../services/VsCode.ts";
 import {
@@ -16,12 +17,31 @@ import {
   runStale,
 } from "../tools.ts";
 
-function makeLayer(vscode: TestVsCode) {
-  return Layer.empty.pipe(
+function makeLayer(vscode: TestVsCode, kernelActive?: boolean) {
+  const base = Layer.empty.pipe(
     Layer.merge(NotebookEditorRegistry.Default),
     Layer.provide(TestTelemetryLive),
     Layer.provideMerge(vscode.layer),
   );
+
+  if (kernelActive === undefined) {
+    return base;
+  }
+
+  const controllerLayer = Layer.succeed(
+    ControllerRegistry,
+    ControllerRegistry.make({
+      getActiveController: (_notebook) =>
+        Effect.succeed(kernelActive ? Option.some({} as never) : Option.none()),
+      snapshot: () =>
+        Effect.succeed({
+          controllers: [],
+          selections: [],
+        }),
+    }),
+  );
+
+  return Layer.merge(base, controllerLayer);
 }
 
 it.effect(
@@ -195,6 +215,47 @@ it.effect(
 );
 
 it.effect(
+  "runStale returns a helpful error when notebook is open but no kernel is active",
+  Effect.fnUntraced(function* () {
+    const vscode = yield* TestVsCode.make();
+
+    const result = yield* Effect.provide(
+      Effect.gen(function* () {
+        const code = yield* VsCode;
+
+        const notebookData = {
+          cells: [
+            {
+              kind: 2,
+              value: "x = 1",
+              languageId: "python",
+              metadata: { state: "stale", cellId: "cell1" },
+            },
+          ],
+        };
+
+        const notebook = createTestNotebookDocument(
+          code.Uri.file("/test/notebook.py"),
+          { data: notebookData },
+        );
+        const editor = createTestNotebookEditor(notebook);
+
+        yield* vscode.setActiveNotebookEditor(Option.some(editor));
+        yield* TestClock.adjust("10 millis");
+
+        return yield* runStale(notebook.uri.toString() as NotebookId);
+      }),
+      makeLayer(vscode, false),
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.cells_triggered).toBe(0);
+    expect(result.error).toContain("no active kernel/controller");
+    expect(result.error).toContain("Select a notebook kernel");
+  }),
+);
+
+it.effect(
   "runStale triggers execution for stale cells",
   Effect.fnUntraced(function* () {
     const vscode = yield* TestVsCode.make();
@@ -238,7 +299,7 @@ it.effect(
 
         return yield* runStale(notebook.uri.toString() as NotebookId);
       }),
-      makeLayer(vscode),
+      makeLayer(vscode, true),
     );
 
     expect(result).toEqual({
@@ -370,6 +431,47 @@ it.effect(
 );
 
 it.effect(
+  "runCells returns a helpful error when notebook is open but no kernel is active",
+  Effect.fnUntraced(function* () {
+    const vscode = yield* TestVsCode.make();
+
+    const result = yield* Effect.provide(
+      Effect.gen(function* () {
+        const code = yield* VsCode;
+
+        const notebookData = {
+          cells: [
+            {
+              kind: 2,
+              value: "x = 1",
+              languageId: "python",
+              metadata: { cellId: "cell1" },
+            },
+          ],
+        };
+
+        const notebook = createTestNotebookDocument(
+          code.Uri.file("/test/notebook.py"),
+          { data: notebookData },
+        );
+        const editor = createTestNotebookEditor(notebook);
+
+        yield* vscode.setActiveNotebookEditor(Option.some(editor));
+        yield* TestClock.adjust("10 millis");
+
+        return yield* runCells(notebook.uri.toString() as NotebookId, [0]);
+      }),
+      makeLayer(vscode, false),
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.cells_triggered).toBe(0);
+    expect(result.error).toContain("no active kernel/controller");
+    expect(result.error).toContain("Select a notebook kernel");
+  }),
+);
+
+it.effect(
   "runCells triggers execution for specified cells",
   Effect.fnUntraced(function* () {
     const vscode = yield* TestVsCode.make();
@@ -413,7 +515,7 @@ it.effect(
         // Run cells 0 and 2 (skipping cell 1)
         return yield* runCells(notebook.uri.toString() as NotebookId, [0, 2]);
       }),
-      makeLayer(vscode),
+      makeLayer(vscode, true),
     );
 
     expect(result).toEqual({

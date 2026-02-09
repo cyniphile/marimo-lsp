@@ -21,51 +21,53 @@ export class NotebookEditorRegistry extends Effect.Service<NotebookEditorRegistr
         Option.none<NotebookId>(),
       );
 
+      // Helper to process an editor (either initial or from stream)
+      const processEditor = Effect.fn(function* (
+        editor: Option.Option<vscode.NotebookEditor>,
+      ) {
+        const notebook = Option.filterMap(editor, (ed) =>
+          MarimoNotebookDocument.tryFrom(ed.notebook),
+        );
+        if (Option.isNone(editor) || Option.isNone(notebook)) {
+          yield* SubscriptionRef.set(activeNotebookRef, Option.none());
+          return;
+        }
+
+        const isAlreadyTracked = HashMap.has(
+          yield* Ref.get(ref),
+          notebook.value.id,
+        );
+
+        yield* Ref.update(ref, (map) =>
+          HashMap.set(map, notebook.value.id, editor.value),
+        );
+
+        yield* Effect.logInfo("Active notebook changed").pipe(
+          Effect.annotateLogs({ notebookUri: notebook.value.id }),
+        );
+
+        // Track notebook opened event (only for new notebooks)
+        if (!isAlreadyTracked) {
+          yield* telemetry.capture("notebook_opened", {
+            cellCount: editor.value.notebook.cellCount,
+          });
+        }
+
+        yield* SubscriptionRef.set(
+          activeNotebookRef,
+          Option.some(notebook.value.id),
+        );
+      });
+
+      // Process the currently active notebook editor at startup
+      const initialEditor = yield* code.window.getActiveNotebookEditor();
+      yield* processEditor(initialEditor);
+
+      // Subscribe to future changes
       yield* Effect.forkScoped(
-        code.window.activeNotebookEditorChanges().pipe(
-          Stream.runForEach(
-            Effect.fn(function* (editor) {
-              const notebook = Option.filterMap(editor, (editor) =>
-                MarimoNotebookDocument.tryFrom(editor.notebook),
-              );
-              if (Option.isNone(editor) || Option.isNone(notebook)) {
-                yield* SubscriptionRef.set(activeNotebookRef, Option.none());
-                return;
-              }
-
-              // Only track marimo notebooks
-              if (Option.isNone(notebook)) {
-                yield* SubscriptionRef.set(activeNotebookRef, Option.none());
-                return;
-              }
-
-              const isNewNotebook = HashMap.has(
-                yield* Ref.get(ref),
-                notebook.value.id,
-              );
-
-              yield* Ref.update(ref, (map) =>
-                HashMap.set(map, notebook.value.id, editor.value),
-              );
-
-              yield* Effect.logInfo("Active notebook changed").pipe(
-                Effect.annotateLogs({ notebookUri: notebook.value.id }),
-              );
-
-              // Track notebook opened event (only for new notebooks)
-              if (!isNewNotebook) {
-                yield* telemetry.capture("notebook_opened", {
-                  cellCount: editor.value.notebook.cellCount,
-                });
-              }
-
-              yield* SubscriptionRef.set(
-                activeNotebookRef,
-                Option.some(notebook.value.id),
-              );
-            }),
-          ),
-        ),
+        code.window
+          .activeNotebookEditorChanges()
+          .pipe(Stream.mapEffect(processEditor), Stream.runDrain),
       );
 
       return {

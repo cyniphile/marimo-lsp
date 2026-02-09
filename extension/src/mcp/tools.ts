@@ -1,9 +1,9 @@
 import * as path from "node:path";
 import { Duration, Effect, Option } from "effect";
 import { MarimoNotebookDocument, type NotebookId } from "../schemas.ts";
+import { ControllerRegistry } from "../services/ControllerRegistry.ts";
 import { DatasourcesService } from "../services/datasources/DatasourcesService.ts";
 import { ExecutionRegistry } from "../services/ExecutionRegistry.ts";
-import { NotebookEditorRegistry } from "../services/NotebookEditorRegistry.ts";
 import { VsCode } from "../services/VsCode.ts";
 import { VariablesService } from "../services/variables/VariablesService.ts";
 import type {
@@ -31,21 +31,78 @@ export type {
   VariableValue,
 };
 
+function findOpenNotebook(notebookUri: NotebookId) {
+  return Effect.gen(function* () {
+    const code = yield* VsCode;
+    const notebookDocs = yield* code.workspace.getNotebookDocuments();
+
+    for (const doc of notebookDocs) {
+      if (doc.uri.toString() !== notebookUri) {
+        continue;
+      }
+      const marimoNotebook = MarimoNotebookDocument.tryFrom(doc);
+      if (Option.isSome(marimoNotebook)) {
+        return Option.some(marimoNotebook.value);
+      }
+    }
+
+    return Option.none<MarimoNotebookDocument>();
+  });
+}
+
+function noActiveKernelMessage(notebookUri: NotebookId): string {
+  return (
+    "Notebook is open but has no active kernel/controller. To run cells via MCP:\n" +
+    "1. Select a notebook kernel in VS Code (top-right kernel picker)\n" +
+    "2. Run a cell once to initialize the kernel session\n" +
+    "3. Retry run_cells or run_stale\n" +
+    `Requested: ${notebookUri}`
+  );
+}
+
+function checkNotebookRunnable(notebook: MarimoNotebookDocument) {
+  return Effect.serviceOption(ControllerRegistry).pipe(
+    Effect.flatMap((registryOpt) =>
+      Option.match(registryOpt, {
+        // If the controller service isn't available in this runtime (e.g. some
+        // tests), skip this guard.
+        onNone: () => Effect.succeed(Option.none<string>()),
+        onSome: (registry) =>
+          registry
+            .getActiveController(notebook)
+            .pipe(
+              Effect.map((controllerOpt) =>
+                Option.isSome(controllerOpt)
+                  ? Option.none<string>()
+                  : Option.some(noActiveKernelMessage(notebook.id)),
+              ),
+            ),
+      }),
+    ),
+  );
+}
+
 /**
  * List all open marimo notebooks
  */
 export function listNotebooks() {
   return Effect.gen(function* () {
-    const registry = yield* NotebookEditorRegistry;
-    const editors = yield* registry.getNotebookEditors();
+    const code = yield* VsCode;
+    const notebookDocs = yield* code.workspace.getNotebookDocuments();
 
     const notebooks: NotebookInfo[] = [];
-    for (const [uri, editor] of editors) {
-      const name = path.basename(editor.notebook.uri.fsPath) || "Untitled";
+    for (const doc of notebookDocs) {
+      const notebookOpt = MarimoNotebookDocument.tryFrom(doc);
+      if (Option.isNone(notebookOpt)) {
+        continue;
+      }
+
+      const notebook = notebookOpt.value;
+      const name = path.basename(notebook.uri.fsPath) || "Untitled";
       notebooks.push({
-        uri,
+        uri: notebook.id,
         name,
-        cellCount: editor.notebook.cellCount,
+        cellCount: notebook.cellCount,
       });
     }
 
@@ -130,14 +187,13 @@ export function getTables(notebookUri: NotebookId) {
  */
 export function getCellOutputs(notebookUri: NotebookId) {
   return Effect.gen(function* () {
-    const registry = yield* NotebookEditorRegistry;
-    const editorOpt = yield* registry.getNotebookEditor(notebookUri);
+    const notebookOpt = yield* findOpenNotebook(notebookUri);
 
-    return Option.match(editorOpt, {
+    return Option.match(notebookOpt, {
       onNone: () => [] as CellOutput[],
-      onSome: (editor) => {
+      onSome: (notebook) => {
         const results: CellOutput[] = [];
-        const cells = editor.notebook.getCells();
+        const cells = notebook.getCells();
 
         for (let i = 0; i < cells.length; i++) {
           const cell = cells[i];
@@ -173,14 +229,10 @@ export function getCellOutputs(notebookUri: NotebookId) {
             }
           }
 
-          // Get cell name from metadata if available
-          let cellName: string | null = null;
-          try {
-            const metadata = cell.metadata as { name?: string } | undefined;
-            cellName = metadata?.name ?? null;
-          } catch {
-            // Ignore metadata parsing errors
-          }
+          const cellName = Option.match(cell.name, {
+            onNone: () => null,
+            onSome: (name) => name,
+          });
 
           results.push({
             cell_index: i,
@@ -202,11 +254,10 @@ export function getCellOutputs(notebookUri: NotebookId) {
  */
 export function runStale(notebookUri: NotebookId) {
   return Effect.gen(function* () {
-    const registry = yield* NotebookEditorRegistry;
     const code = yield* VsCode;
-    const editorOpt = yield* registry.getNotebookEditor(notebookUri);
+    const notebookOpt = yield* findOpenNotebook(notebookUri);
 
-    if (Option.isNone(editorOpt)) {
+    if (Option.isNone(notebookOpt)) {
       return {
         success: false,
         error: "Notebook not found",
@@ -214,22 +265,23 @@ export function runStale(notebookUri: NotebookId) {
       } as RunStaleResult;
     }
 
-    const editor = editorOpt.value;
-    const notebook = MarimoNotebookDocument.tryFrom(editor.notebook);
-    if (Option.isNone(notebook)) {
-      return {
-        success: false,
-        error: "Not a marimo notebook",
-        cells_triggered: 0,
-      } as RunStaleResult;
-    }
+    const notebook = notebookOpt.value;
 
-    const staleCells = notebook.value.getCells().filter((cell) => cell.isStale);
+    const staleCells = notebook.getCells().filter((cell) => cell.isStale);
     if (staleCells.length === 0) {
       return {
         success: true,
         cells_triggered: 0,
         message: "No stale cells",
+      } as RunStaleResult;
+    }
+
+    const runnableError = yield* checkNotebookRunnable(notebook);
+    if (Option.isSome(runnableError)) {
+      return {
+        success: false,
+        error: runnableError.value,
+        cells_triggered: 0,
       } as RunStaleResult;
     }
 
@@ -239,7 +291,7 @@ export function runStale(notebookUri: NotebookId) {
         start: cell.index,
         end: cell.index + 1,
       })),
-      document: editor.notebook.uri,
+      document: notebook.uri,
     });
 
     return {
@@ -256,11 +308,10 @@ export function runStale(notebookUri: NotebookId) {
  */
 export function runCells(notebookUri: NotebookId, cellIndices: number[]) {
   return Effect.gen(function* () {
-    const registry = yield* NotebookEditorRegistry;
     const code = yield* VsCode;
-    const editorOpt = yield* registry.getNotebookEditor(notebookUri);
+    const notebookOpt = yield* findOpenNotebook(notebookUri);
 
-    if (Option.isNone(editorOpt)) {
+    if (Option.isNone(notebookOpt)) {
       return {
         success: false,
         error: "Notebook not found",
@@ -268,17 +319,9 @@ export function runCells(notebookUri: NotebookId, cellIndices: number[]) {
       } as RunCellsResult;
     }
 
-    const editor = editorOpt.value;
-    const notebook = MarimoNotebookDocument.tryFrom(editor.notebook);
-    if (Option.isNone(notebook)) {
-      return {
-        success: false,
-        error: "Not a marimo notebook",
-        cells_triggered: 0,
-      } as RunCellsResult;
-    }
+    const notebook = notebookOpt.value;
 
-    const totalCells = notebook.value.getCells().length;
+    const totalCells = notebook.getCells().length;
 
     // Validate cell indices
     const invalidIndices = cellIndices.filter((i) => i < 0 || i >= totalCells);
@@ -300,13 +343,22 @@ export function runCells(notebookUri: NotebookId, cellIndices: number[]) {
       } as RunCellsResult;
     }
 
+    const runnableError = yield* checkNotebookRunnable(notebook);
+    if (Option.isSome(runnableError)) {
+      return {
+        success: false,
+        error: runnableError.value,
+        cells_triggered: 0,
+      } as RunCellsResult;
+    }
+
     // Trigger execution (async - returns immediately)
     yield* code.commands.executeCommand("notebook.cell.execute", {
       ranges: uniqueIndices.map((i) => ({
         start: i,
         end: i + 1,
       })),
-      document: editor.notebook.uri,
+      document: notebook.uri,
     });
 
     return {
@@ -352,10 +404,9 @@ function tryGetExecutionStates(): Effect.Effect<
  */
 export function getNotebookStatus(notebookUri: NotebookId) {
   return Effect.gen(function* () {
-    const registry = yield* NotebookEditorRegistry;
-    const editorOpt = yield* registry.getNotebookEditor(notebookUri);
+    const notebookOpt = yield* findOpenNotebook(notebookUri);
 
-    if (Option.isNone(editorOpt)) {
+    if (Option.isNone(notebookOpt)) {
       return {
         cells: [],
         is_busy: false,
@@ -365,7 +416,7 @@ export function getNotebookStatus(notebookUri: NotebookId) {
       } as NotebookStatus;
     }
 
-    const editor = editorOpt.value;
+    const notebook = notebookOpt.value;
     const cells: CellStatus[] = [];
     let runningCount = 0;
     let queuedCount = 0;
@@ -375,41 +426,39 @@ export function getNotebookStatus(notebookUri: NotebookId) {
     const executionStates = yield* tryGetExecutionStates();
 
     // Access raw cells directly
-    const rawCells = editor.notebook.getCells();
+    const rawCells = notebook.getCells();
 
     for (let i = 0; i < rawCells.length; i++) {
       const cell = rawCells[i];
 
       let state: "idle" | "queued" | "running" | "stale" | "unknown" = "idle";
-      let cellName: string | null = null;
+      const cellName = Option.match(cell.name, {
+        onNone: () => null,
+        onSome: (name) => name,
+      });
 
-      try {
-        const metadata = cell.metadata as
-          | { state?: string; name?: string; stableId?: string }
-          | undefined;
-        cellName = metadata?.name ?? null;
-
-        // First check execution registry for running/pending state
-        const stableId = metadata?.stableId;
-        if (stableId && executionStates.size > 0) {
-          const execState = executionStates.get(stableId);
-          if (execState === "running") {
-            state = "running";
-          } else if (execState === "pending") {
-            state = "queued";
-          }
+      // First check execution registry for running/pending state
+      const stableId = Option.match(cell.stableId, {
+        onNone: () => undefined,
+        onSome: (id) => id,
+      });
+      if (stableId && executionStates.size > 0) {
+        const execState = executionStates.get(stableId);
+        if (execState === "running") {
+          state = "running";
+        } else if (execState === "pending") {
+          state = "queued";
         }
+      }
 
-        // If not running/queued, check metadata for stale state
-        if (state === "idle") {
-          const rawState = metadata?.state;
-          if (rawState === "stale") {
-            state = "stale";
-          }
+      // If not running/queued, check metadata for stale state
+      if (state === "idle") {
+        const rawState = cell.metadata.pipe(
+          Option.flatMap((metadata) => Option.fromNullable(metadata.state)),
+        );
+        if (Option.isSome(rawState) && rawState.value === "stale") {
+          state = "stale";
         }
-      } catch {
-        // Ignore metadata parsing errors
-        state = "unknown";
       }
 
       cells.push({
@@ -436,8 +485,4 @@ export function getNotebookStatus(notebookUri: NotebookId) {
 /**
  * The type of services required for MCP tools
  */
-export type McpToolsDeps =
-  | NotebookEditorRegistry
-  | VariablesService
-  | DatasourcesService
-  | VsCode;
+export type McpToolsDeps = VariablesService | DatasourcesService | VsCode;

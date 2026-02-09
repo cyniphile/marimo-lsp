@@ -2247,6 +2247,9 @@ export class TestVsCode extends Data.TaggedClass("TestVsCode")<{
           yield* SubscriptionRef.set(activeNotebookEditor, editor);
           // Also update visible editors - when an editor becomes active, it's visible
           if (Option.isSome(editor)) {
+            yield* Ref.update(notebookDocuments, (docs) =>
+              HashSet.add(docs, editor.value.notebook),
+            );
             const current = yield* SubscriptionRef.get(visibleNotebookEditors);
             yield* SubscriptionRef.set(visibleNotebookEditors, [
               ...current,
