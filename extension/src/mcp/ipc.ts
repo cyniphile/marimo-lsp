@@ -1,16 +1,20 @@
 import * as fs from "node:fs";
 import * as net from "node:net";
 import { Effect, Option, Queue, Runtime } from "effect";
-import type { NotebookId } from "../schemas.ts";
+import { MarimoNotebookDocument, type NotebookId } from "../schemas.ts";
 import type { DatasourcesService } from "../services/datasources/DatasourcesService.ts";
-import { NotebookEditorRegistry } from "../services/NotebookEditorRegistry.ts";
 import { VsCode } from "../services/VsCode.ts";
 import type { VariablesService } from "../services/variables/VariablesService.ts";
 import {
+  discoverSockets,
+  getSocketDir,
   getSocketPath,
   type IpcRequest,
   type IpcRequestBody,
   type IpcResponse,
+  registerSocket,
+  unregisterSocket,
+  unregisterSocketByPath,
 } from "./ipc-client.ts";
 import {
   getCellOutputs,
@@ -25,20 +29,26 @@ import {
 import type { RunCellsResult, RunStaleResult } from "./types.ts";
 
 /**
- * Check if a notebook is open and running, return a helpful error message if not.
+ * Check if a marimo notebook document is currently open, returning a helpful
+ * error message if not.
  * Returns Option.none() if notebook is ready, Option.some(errorMessage) if not.
  */
 function checkNotebookOpen(notebookUri: NotebookId) {
   return Effect.gen(function* () {
-    const registry = yield* NotebookEditorRegistry;
-    const editorOpt = yield* registry.getNotebookEditor(notebookUri);
+    const code = yield* VsCode;
+    const notebookDocs = yield* code.workspace.getNotebookDocuments();
+    const isOpen = notebookDocs.some((doc) => {
+      if (doc.uri.toString() !== notebookUri) {
+        return false;
+      }
+      return Option.isSome(MarimoNotebookDocument.tryFrom(doc));
+    });
 
-    if (Option.isNone(editorOpt)) {
+    if (!isOpen) {
       return Option.some(
-        `Notebook is not open or not running. To use MCP tools:\n` +
+        `Notebook is not currently open as a marimo notebook. To use MCP tools:\n` +
           `1. Open the notebook in VS Code (click the marimo icon or use "Open as marimo notebook")\n` +
-          `2. Wait for the kernel to start (run a cell or wait for auto-instantiate)\n` +
-          `3. Use list_notebooks to verify it appears in the list\n` +
+          `2. Use list_notebooks to verify it appears in the list\n` +
           `Requested: ${notebookUri}`,
       );
     }
@@ -49,16 +59,13 @@ function checkNotebookOpen(notebookUri: NotebookId) {
 
 // Re-export for convenience
 export {
+  getSocketDir,
   getSocketPath,
   type IpcRequest,
   type IpcResponse,
 } from "./ipc-client.ts";
 
-type IpcServerDeps =
-  | NotebookEditorRegistry
-  | VariablesService
-  | DatasourcesService
-  | VsCode;
+type IpcServerDeps = VariablesService | DatasourcesService | VsCode;
 
 /**
  * Handle an IPC request and return a response body
@@ -174,40 +181,69 @@ function handleRequestBody(request: IpcRequestBody) {
 }
 
 /**
- * Check if a socket is in use by attempting to connect to it
+ * Check if a socket is alive by attempting to connect to it.
+ * Used to clean up stale sockets from crashed extensions.
  */
-function isSocketInUse(socketPath: string): Promise<boolean> {
+function isSocketAlive(socketPath: string): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = net.createConnection(socketPath, () => {
-      // Connection succeeded - socket is in use
       socket.destroy();
       resolve(true);
     });
     socket.on("error", () => {
-      // Connection failed - socket is stale or doesn't exist
       resolve(false);
     });
   });
 }
 
 /**
- * Create the IPC server that listens for requests from the MCP CLI
+ * Clean up stale sockets in the socket directory.
+ * Tries to connect to each discovered socket; removes those that are dead.
  */
-export function createIpcServer() {
+function cleanupStaleSockets() {
   return Effect.gen(function* () {
-    const socketPath = getSocketPath();
+    const sockets = discoverSockets();
+    for (const socketPath of sockets) {
+      const alive = yield* Effect.promise(() => isSocketAlive(socketPath));
+      if (!alive) {
+        yield* Effect.sync(() => {
+          if (process.platform === "win32") {
+            unregisterSocketByPath(socketPath);
+          } else {
+            try {
+              fs.unlinkSync(socketPath);
+            } catch {
+              // Ignore — already gone
+            }
+          }
+        });
+        yield* Effect.logDebug("Cleaned up stale socket").pipe(
+          Effect.annotateLogs({ socketPath }),
+        );
+      }
+    }
+  });
+}
 
-    // Check if another instance is already using this socket
-    const inUse = yield* Effect.promise(() => isSocketInUse(socketPath));
-    if (inUse) {
-      yield* Effect.logWarning(
-        "MCP IPC socket already in use by another VS Code instance",
-      ).pipe(Effect.annotateLogs({ socketPath }));
-      // Return without starting the server - another instance will handle MCP
-      return { socketPath, active: false };
+/**
+ * Create the IPC server that listens for requests from the MCP CLI.
+ * Each VS Code window gets its own socket identified by sessionId.
+ */
+export function createIpcServer(sessionId: string) {
+  return Effect.gen(function* () {
+    const socketPath = getSocketPath(sessionId);
+
+    // Ensure socket directory exists (Unix only, no-op for env override)
+    if (!process.env.MARIMO_MCP_SOCKET && process.platform !== "win32") {
+      yield* Effect.sync(() => {
+        fs.mkdirSync(getSocketDir(), { recursive: true, mode: 0o700 });
+      });
     }
 
-    // Clean up stale socket file if it exists
+    // Clean up stale sockets from previous crashed extensions
+    yield* cleanupStaleSockets();
+
+    // Remove our own socket if it exists (stale from a previous crash)
     yield* Effect.sync(() => {
       try {
         fs.unlinkSync(socketPath);
@@ -237,8 +273,12 @@ export function createIpcServer() {
       });
     });
 
+    yield* Effect.sync(() => {
+      registerSocket(sessionId, socketPath);
+    });
+
     yield* Effect.logInfo("MCP IPC server started").pipe(
-      Effect.annotateLogs({ socketPath }),
+      Effect.annotateLogs({ socketPath, sessionId }),
     );
 
     // Process connections in the background
@@ -255,10 +295,13 @@ export function createIpcServer() {
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         server.close();
-        try {
-          fs.unlinkSync(socketPath);
-        } catch {
-          // Ignore cleanup errors
+        unregisterSocket(sessionId);
+        if (process.platform !== "win32") {
+          try {
+            fs.unlinkSync(socketPath);
+          } catch {
+            // Ignore cleanup errors
+          }
         }
       }),
     );

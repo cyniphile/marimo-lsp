@@ -1952,6 +1952,7 @@ export class TestVsCode extends Data.TaggedClass("TestVsCode")<{
           appRoot: "/mocks",
           appHost: "desktop",
           machineId: "mock-machine-id",
+          sessionId: "mock-session-id",
           openExternal() {
             return Effect.succeed(true);
           },

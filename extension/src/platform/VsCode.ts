@@ -477,6 +477,7 @@ export class Env extends Effect.Service<Env>()("Env", {
       appRoot: api.appRoot,
       appHost: api.appHost,
       machineId: api.machineId,
+      sessionId: api.sessionId,
       openExternal(target: vscode.Uri): Effect.Effect<boolean> {
         return Effect.promise(() => api.openExternal(target));
       },

@@ -184,7 +184,7 @@ optionally execute cells.
 │  MCP Client   │ ◄──────────────────►│   MCP CLI    │ ◄────────────────────►│  VS Code Extension   │
 │ (Claude Code) │                     │  (Node.js)   │                        │  (Effect services)   │
 └───────────────┘                     └──────────────┘                        └──────────────────────┘
-                                                                              │ NotebookEditorRegistry │
+                                                                              │ VsCode (workspace docs)│
                                                                               │ VariablesService        │
                                                                               │ DatasourcesService      │
                                                                               │ ExecutionRegistry       │
@@ -217,4 +217,6 @@ optionally execute cells.
 ### Operational notes
 
 - MCP only works for notebooks opened as marimo notebooks in VS Code.
-- Only one VS Code window per user can bind the MCP socket at a time.
+- Multiple VS Code windows are supported; the CLI discovers active sockets/pipes
+  and routes notebook-specific requests to the owning window.
+- If `MARIMO_MCP_SOCKET` is set, it forces a single explicit socket/pipe path.

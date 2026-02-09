@@ -3,7 +3,10 @@
  * MCP CLI Entry Point
  *
  * This is the CLI that Claude Code spawns. It communicates via STDIO with Claude Code
- * and connects to the VS Code extension via IPC to query notebook data.
+ * and connects to VS Code extension instances via IPC to query notebook data.
+ *
+ * Supports multiple VS Code windows: discovers all active extension sockets
+ * and aggregates responses across them.
  *
  * This file is intentionally kept standalone with no VS Code dependencies.
  */
@@ -13,9 +16,12 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { IpcClient, type IpcResponseBody } from "./mcp/ipc-client.ts";
+import type { IpcRequestBody, NotebookInfo } from "./mcp/ipc-client.ts";
+import { IpcClientPool } from "./mcp/ipc-client-pool.ts";
 
-const server = new Server(
+// ── MCP Server ─────────────────────────────────────────────────────────────
+
+const mcpServer = new Server(
   {
     name: "marimo-mcp",
     version: "1.0.0",
@@ -27,19 +33,19 @@ const server = new Server(
   },
 );
 
-let ipcClient: IpcClient | null = null;
+const pool = new IpcClientPool();
 
-async function ensureConnected(): Promise<IpcClient> {
-  if (!ipcClient) {
-    const client = new IpcClient();
-    await client.connect();
-    ipcClient = client;
+async function ensureConnected(): Promise<void> {
+  await pool.refresh();
+  if (pool.size === 0) {
+    throw new Error(
+      "No VS Code windows with marimo notebooks found. Make sure at least one VS Code window with a marimo notebook is open.",
+    );
   }
-  return ipcClient;
 }
 
 // List available tools
-server.setRequestHandler(ListToolsRequestSchema, async () => {
+mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
@@ -175,55 +181,51 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 
 // Handle tool calls
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
-    const client = await ensureConnected();
-    let response: IpcResponseBody;
+    await ensureConnected();
+
+    // ── list_notebooks: aggregate across all windows ──
+    if (name === "list_notebooks") {
+      const results = await pool.requestAll({ type: "list_notebooks" });
+      const allNotebooks: NotebookInfo[] = [];
+      for (const { socketPath, response } of results) {
+        if (response.type === "list_notebooks") {
+          allNotebooks.push(...response.notebooks);
+          // Cache notebook→socket routing for faster subsequent requests
+          pool.updateRoutes(socketPath, response.notebooks);
+        }
+      }
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(allNotebooks, null, 2),
+          },
+        ],
+      };
+    }
+
+    // ── notebook-specific tools: route to the right window ──
+    let body: IpcRequestBody & { notebook_uri: string };
 
     switch (name) {
-      case "list_notebooks":
-        response = await client.request({ type: "list_notebooks" });
-        break;
-
       case "get_variables":
-        response = await client.request({
-          type: "get_variables",
-          notebook_uri: (args as { notebook_uri: string }).notebook_uri,
-        });
-        break;
-
       case "get_variable_values":
-        response = await client.request({
-          type: "get_variable_values",
-          notebook_uri: (args as { notebook_uri: string }).notebook_uri,
-        });
-        break;
-
       case "get_tables":
-        response = await client.request({
-          type: "get_tables",
-          notebook_uri: (args as { notebook_uri: string }).notebook_uri,
-        });
-        break;
-
       case "get_cell_outputs":
-        response = await client.request({
-          type: "get_cell_outputs",
-          notebook_uri: (args as { notebook_uri: string }).notebook_uri,
-        });
-        break;
-
+      case "get_notebook_status":
       case "run_stale":
-        response = await client.request({
-          type: "run_stale",
+        body = {
+          type: name,
           notebook_uri: (args as { notebook_uri: string }).notebook_uri,
-        });
+        } as IpcRequestBody & { notebook_uri: string };
         break;
 
       case "run_cells":
-        response = await client.request({
+        body = {
           type: "run_cells",
           notebook_uri: (
             args as { notebook_uri: string; cell_indices: number[] }
@@ -231,14 +233,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           cell_indices: (
             args as { notebook_uri: string; cell_indices: number[] }
           ).cell_indices,
-        });
-        break;
-
-      case "get_notebook_status":
-        response = await client.request({
-          type: "get_notebook_status",
-          notebook_uri: (args as { notebook_uri: string }).notebook_uri,
-        });
+        };
         break;
 
       default:
@@ -252,6 +247,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           isError: true,
         };
     }
+
+    const response = await pool.requestOne(body);
 
     if (response.type === "error") {
       return {
@@ -318,7 +315,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // Start the server
 async function main() {
   const transport = new StdioServerTransport();
-  await server.connect(transport);
+  await mcpServer.connect(transport);
 }
 
 main().catch((error) => {
