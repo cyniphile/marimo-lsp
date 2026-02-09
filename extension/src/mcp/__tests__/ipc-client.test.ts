@@ -158,6 +158,42 @@ describe("discoverSockets", () => {
     }
   });
 
+  it("includes legacy single-socket path on Unix when present", () => {
+    setPlatform("darwin");
+    useSandboxSocketDir();
+    delete process.env.MARIMO_MCP_SOCKET;
+
+    const legacySocket = getSocketPath();
+    fs.mkdirSync(path.dirname(legacySocket), { recursive: true });
+    fs.writeFileSync(legacySocket, "");
+
+    try {
+      const sockets = discoverSockets();
+      expect(sockets).toContain(legacySocket);
+    } finally {
+      fs.rmSync(legacySocket, { force: true });
+    }
+  });
+
+  it("on Unix discovers sockets under /tmp when TMPDIR differs", () => {
+    setPlatform("darwin");
+    useSandboxSocketDir();
+    delete process.env.MARIMO_MCP_SOCKET;
+
+    const uid = process.getuid?.() ?? 0;
+    const fallbackDir = path.join("/tmp", `marimo-mcp-${uid}`);
+    const fallbackSocket = path.join(fallbackDir, "from-tmp.sock");
+    fs.mkdirSync(fallbackDir, { recursive: true });
+    fs.writeFileSync(fallbackSocket, "");
+
+    try {
+      const sockets = discoverSockets();
+      expect(sockets).toContain(fallbackSocket);
+    } finally {
+      fs.rmSync(fallbackDir, { recursive: true, force: true });
+    }
+  });
+
   it("with MARIMO_MCP_SOCKET env returns single-element array", () => {
     process.env.MARIMO_MCP_SOCKET = "/override/socket.sock";
     const sockets = discoverSockets();

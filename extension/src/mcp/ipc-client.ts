@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
@@ -44,6 +45,9 @@ function getUid(): string {
 
 const WINDOWS_SOCKET_MARKER_EXT = ".pipe";
 const SESSION_TOKEN_LENGTH = 16;
+const DEFAULT_IPC_REQUEST_TIMEOUT_MS = 15_000;
+
+let cachedDarwinUserTempDir: string | null | undefined;
 
 function getSessionToken(sessionId: string): string {
   return crypto
@@ -55,6 +59,59 @@ function getSessionToken(sessionId: string): string {
 
 function getWindowsSocketMarkerPath(sessionId: string): string {
   return path.join(getSocketDir(), `${sessionId}${WINDOWS_SOCKET_MARKER_EXT}`);
+}
+
+function getRequestTimeoutMs(): number {
+  const fromEnv = Number(process.env.MARIMO_MCP_IPC_TIMEOUT_MS);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) {
+    return fromEnv;
+  }
+  return DEFAULT_IPC_REQUEST_TIMEOUT_MS;
+}
+
+function normalizeTempDir(tmpDir: string): string {
+  if (tmpDir.length > 1 && tmpDir.endsWith(path.sep)) {
+    return tmpDir.slice(0, -1);
+  }
+  return tmpDir;
+}
+
+function getDarwinUserTempDir(): string | null {
+  if (cachedDarwinUserTempDir !== undefined) {
+    return cachedDarwinUserTempDir;
+  }
+
+  try {
+    const value = execFileSync("getconf", ["DARWIN_USER_TEMP_DIR"], {
+      encoding: "utf8",
+    }).trim();
+    cachedDarwinUserTempDir = value.length > 0 ? normalizeTempDir(value) : null;
+  } catch {
+    cachedDarwinUserTempDir = null;
+  }
+
+  return cachedDarwinUserTempDir;
+}
+
+function getUnixTempDirs(): string[] {
+  const dirs = new Set<string>();
+  const add = (tmpDir: string | undefined | null) => {
+    if (!tmpDir) {
+      return;
+    }
+    dirs.add(normalizeTempDir(tmpDir));
+  };
+
+  add(process.env.TMPDIR);
+  add(os.tmpdir());
+  if (process.platform === "darwin") {
+    add(getDarwinUserTempDir());
+  }
+  // Stdio MCP clients often sanitize env vars (dropping TMPDIR), so include
+  // canonical /tmp for compatibility with spawned child processes.
+  add("/tmp");
+
+  return [...dirs];
 }
 
 /**
@@ -201,16 +258,37 @@ export function discoverSockets(): string[] {
     return [getSocketPath()];
   }
 
-  const socketDir = getSocketDir();
-  try {
-    const entries = fs.readdirSync(socketDir);
-    return entries
-      .filter((e) => e.endsWith(".sock"))
-      .map((e) => path.join(socketDir, e));
-  } catch {
-    // Directory doesn't exist yet — no extensions running
-    return [];
+  const uid = getUid();
+  const sockets = new Set<string>();
+
+  // Discover per-session sockets across plausible temp roots.
+  for (const tmpDir of getUnixTempDirs()) {
+    const socketDir = path.join(tmpDir, `marimo-mcp-${uid}`);
+    try {
+      const entries = fs.readdirSync(socketDir);
+      for (const entry of entries) {
+        if (entry.endsWith(".sock")) {
+          sockets.add(path.join(socketDir, entry));
+        }
+      }
+    } catch {
+      // Directory may not exist for this temp root
+    }
   }
+
+  // Backward compatibility: include legacy single-socket path if present.
+  for (const tmpDir of getUnixTempDirs()) {
+    const legacySocket = path.join(tmpDir, `marimo-mcp-${uid}.sock`);
+    try {
+      if (fs.existsSync(legacySocket)) {
+        sockets.add(legacySocket);
+      }
+    } catch {
+      // Ignore stat errors
+    }
+  }
+
+  return [...sockets];
 }
 
 /**
@@ -286,9 +364,26 @@ export class IpcClient {
 
     const id = this.requestId++;
     const requestWithId: IpcRequest = { ...req, id };
+    const timeoutMs = getRequestTimeoutMs();
 
     return new Promise((resolve, reject) => {
-      this.pendingRequests.set(id, { resolve, reject });
+      const timeout = setTimeout(() => {
+        if (this.pendingRequests.has(id)) {
+          this.pendingRequests.delete(id);
+          reject(new Error(`IPC request timed out after ${timeoutMs}ms`));
+        }
+      }, timeoutMs);
+
+      this.pendingRequests.set(id, {
+        resolve: (value) => {
+          clearTimeout(timeout);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+      });
       this.socket?.write(`${JSON.stringify(requestWithId)}\n`);
     });
   }
