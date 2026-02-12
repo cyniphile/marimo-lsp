@@ -14,8 +14,9 @@
     "prepare": "turbo patch-tsc",
     "patch-tsc": "effect-language-service patch",
     "typecheck-ci": "tsc",
-    "build": "turbo build:renderer && turbo build:extension",
+    "build": "turbo build:renderer && turbo build:extension && turbo build:mcp-cli",
     "build:extension": "esbuild --format=cjs --define:import.meta.env.DEV=false --platform=node --minify --external:vscode --bundle --sourcemap src/extension.ts --outdir=dist",
+    "build:mcp-cli": "esbuild --format=cjs --define:import.meta.env.DEV=false --platform=node --minify --bundle --sourcemap src/mcp-cli.ts --outdir=dist",
     "build:renderer": "vp build",
     "check": "vp check && node ./scripts/check-css-variables.mjs",
     "fix": "vp fmt && vp check --fix",
@@ -24,6 +25,7 @@
     "embed-sdist": "node scripts/embed-sdist.mjs"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
     "@effect/language-service": "^0.45.0",
     "@effect/platform": "^0.92.1",
     "@effect/platform-node": "^0.98.3",
