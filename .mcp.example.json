@@ -3,7 +3,10 @@
     "marimo": {
       "type": "stdio",
       "command": "/path/to/vscode/node",
-      "args": ["/path/to/vscode/globalStorage/marimo/mcp-cli.js"]
+      "args": ["/path/to/vscode/globalStorage/marimo/mcp-cli.js"],
+      "env": {
+        "ELECTRON_RUN_AS_NODE": "1"
+      }
     }
   }
 }

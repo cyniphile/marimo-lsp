@@ -10,7 +10,7 @@ import {
 import { ControllerRegistry } from "../../kernel/ControllerRegistry.ts";
 import { NotebookEditorRegistry } from "../../notebook/NotebookEditorRegistry.ts";
 import { VsCode } from "../../platform/VsCode.ts";
-import type { NotebookId } from "../../schemas.ts";
+import type { NotebookId } from "../../schemas/MarimoNotebookDocument.ts";
 import {
   getCellOutputs,
   getNotebookStatus,

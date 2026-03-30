@@ -11,6 +11,11 @@
       "inputs": ["src/**/*.ts", "!src/renderer/**", "package.json"],
       "env": ["NODE_ENV", "MODE"]
     },
+    "build:mcp-cli": {
+      "outputs": ["dist/mcp-cli.js", "dist/mcp-cli.js.map"],
+      "inputs": ["src/mcp-cli.ts", "src/mcp/**", "package.json"],
+      "env": ["NODE_ENV", "MODE"]
+    },
     "patch-tsc": {
       "inputs": ["package.json"]
     },
@@ -18,7 +23,7 @@
     "check": {},
     "fix": {},
     "test:extension": {
-      "dependsOn": ["build:extension"]
+      "dependsOn": ["build:extension", "build:mcp-cli"]
     }
   }
 }

@@ -43,6 +43,9 @@ export const showMcpConfig = Effect.fn("command.showMcpConfig")(function* () {
         type: "stdio",
         command: process.execPath,
         args: [cliPath],
+        env: {
+          ELECTRON_RUN_AS_NODE: "1",
+        },
       },
     },
   };
@@ -53,11 +56,15 @@ export const showMcpConfig = Effect.fn("command.showMcpConfig")(function* () {
   });
   yield* code.window.showTextDocument(doc);
   if (Either.isLeft(copiedCliPath)) {
-    yield* code.window.showWarningMessage(
-      "Failed to copy MCP CLI to global storage. Using the extension path instead.",
+    yield* Effect.forkScoped(
+      code.window.showWarningMessage(
+        "Failed to copy MCP CLI to global storage. Using the extension path instead.",
+      ),
     );
   }
-  yield* code.window.showInformationMessage(
-    "Paste this into your Claude Code MCP settings.",
+  yield* Effect.forkScoped(
+    code.window.showInformationMessage(
+      "Paste this into your Claude Code MCP settings.",
+    ),
   );
 });

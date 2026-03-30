@@ -23,5 +23,6 @@ paths.
 If you're developing from source, run `pnpm -C extension build:mcp-cli` once
 before step 2.
 
-The config uses VS Code's bundled Node runtime, so users don't need a separate
-Node installation just for MCP.
+The config uses VS Code's bundled Node runtime in Node mode
+(`ELECTRON_RUN_AS_NODE=1`), so users don't need a separate Node installation
+just for MCP.

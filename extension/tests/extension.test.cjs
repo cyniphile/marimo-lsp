@@ -2,6 +2,7 @@
 /// <reference types="mocha" />
 
 const NodeAssert = require("node:assert");
+const NodeFs = require("node:fs");
 const vscode = require("vscode");
 const tinyspy = require("tinyspy");
 
@@ -242,6 +243,42 @@ suite("marimo Extension Hello World Tests", () => {
       }
 
       disposable?.dispose();
+    }
+  });
+
+  test("marimo.showMcpConfig opens a valid MCP config snippet", async () => {
+    const extension = getExtension();
+    NodeAssert.ok(extension.isActive);
+
+    try {
+      await vscode.commands.executeCommand("marimo.showMcpConfig");
+
+      const editor = vscode.window.activeTextEditor;
+      NodeAssert.ok(editor, "Expected MCP config editor to be active");
+
+      const config = JSON.parse(editor.document.getText());
+      const marimo = config?.mcpServers?.marimo;
+
+      NodeAssert.ok(marimo, "Expected marimo MCP server config");
+      NodeAssert.strictEqual(marimo.type, "stdio");
+      NodeAssert.strictEqual(marimo.command, process.execPath);
+      NodeAssert.deepStrictEqual(marimo.env, {
+        ELECTRON_RUN_AS_NODE: "1",
+      });
+      NodeAssert.ok(Array.isArray(marimo.args), "Expected args to be an array");
+      NodeAssert.strictEqual(marimo.args.length, 1);
+      NodeAssert.ok(
+        marimo.args[0].endsWith("mcp-cli.js"),
+        "Expected MCP config to reference mcp-cli.js",
+      );
+      NodeAssert.ok(
+        NodeFs.existsSync(marimo.args[0]),
+        `Expected MCP CLI to exist at ${marimo.args[0]}`,
+      );
+    } finally {
+      await vscode.commands.executeCommand(
+        "workbench.action.closeActiveEditor",
+      );
     }
   });
 });
