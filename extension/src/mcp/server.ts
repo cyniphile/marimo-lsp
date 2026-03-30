@@ -1,5 +1,6 @@
 import { Effect, Layer } from "effect";
-import { VsCode } from "../services/VsCode.ts";
+
+import { VsCode } from "../platform/VsCode.ts";
 import { createIpcServer } from "./ipc.ts";
 
 /**

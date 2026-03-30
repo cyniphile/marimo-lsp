@@ -1,15 +1,16 @@
 import { expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Ref, TestClock } from "effect";
+
 import { TestTelemetryLive } from "../../__mocks__/TestTelemetry.ts";
 import {
   createTestNotebookDocument,
   createTestNotebookEditor,
   TestVsCode,
 } from "../../__mocks__/TestVsCode.ts";
+import { ControllerRegistry } from "../../kernel/ControllerRegistry.ts";
+import { NotebookEditorRegistry } from "../../notebook/NotebookEditorRegistry.ts";
+import { VsCode } from "../../platform/VsCode.ts";
 import type { NotebookId } from "../../schemas.ts";
-import { ControllerRegistry } from "../../services/ControllerRegistry.ts";
-import { NotebookEditorRegistry } from "../../services/NotebookEditorRegistry.ts";
-import { VsCode } from "../../services/VsCode.ts";
 import {
   getCellOutputs,
   getNotebookStatus,

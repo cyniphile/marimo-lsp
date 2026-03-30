@@ -1,11 +1,16 @@
 import * as path from "node:path";
+
 import { Duration, Effect, Option } from "effect";
-import { MarimoNotebookDocument, type NotebookId } from "../schemas.ts";
-import { ControllerRegistry } from "../services/ControllerRegistry.ts";
-import { DatasourcesService } from "../services/datasources/DatasourcesService.ts";
-import { ExecutionRegistry } from "../services/ExecutionRegistry.ts";
-import { VsCode } from "../services/VsCode.ts";
-import { VariablesService } from "../services/variables/VariablesService.ts";
+
+import { ControllerRegistry } from "../kernel/ControllerRegistry.ts";
+import { ExecutionRegistry } from "../kernel/ExecutionRegistry.ts";
+import { DatasourcesService } from "../panel/datasources/DatasourcesService.ts";
+import { VariablesService } from "../panel/variables/VariablesService.ts";
+import { VsCode } from "../platform/VsCode.ts";
+import {
+  MarimoNotebookDocument,
+  type NotebookId,
+} from "../schemas/MarimoNotebookDocument.ts";
 import type {
   CellOutput,
   CellStatus,

@@ -1,8 +1,10 @@
 import * as NodeFs from "node:fs";
 import * as NodePath from "node:path";
+
 import { Effect, Either } from "effect";
-import { ExtensionContext } from "../services/Storage.ts";
-import { VsCode } from "../services/VsCode.ts";
+
+import { ExtensionContext } from "../platform/Storage.ts";
+import { VsCode } from "../platform/VsCode.ts";
 
 export const showMcpConfig = Effect.fn("command.showMcpConfig")(function* () {
   const code = yield* VsCode;

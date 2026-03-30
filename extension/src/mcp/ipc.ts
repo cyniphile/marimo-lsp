@@ -1,10 +1,15 @@
 import * as fs from "node:fs";
 import * as net from "node:net";
+
 import { Effect, Option, Queue, Runtime } from "effect";
-import { MarimoNotebookDocument, type NotebookId } from "../schemas.ts";
-import type { DatasourcesService } from "../services/datasources/DatasourcesService.ts";
-import { VsCode } from "../services/VsCode.ts";
-import type { VariablesService } from "../services/variables/VariablesService.ts";
+
+import type { DatasourcesService } from "../panel/datasources/DatasourcesService.ts";
+import type { VariablesService } from "../panel/variables/VariablesService.ts";
+import { VsCode } from "../platform/VsCode.ts";
+import {
+  MarimoNotebookDocument,
+  type NotebookId,
+} from "../schemas/MarimoNotebookDocument.ts";
 import {
   discoverSockets,
   getSocketDir,
