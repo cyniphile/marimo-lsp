@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Effect, Layer, Option, Ref, TestClock } from "effect";
+import { Effect, Layer, Option, Ref, Stream, TestClock } from "effect";
 
 import { TestTelemetryLive } from "../../__mocks__/TestTelemetry.ts";
 import {
@@ -34,6 +34,7 @@ function makeLayer(vscode: TestVsCode, kernelActive?: boolean) {
     ControllerRegistry.make({
       getActiveController: (_notebook) =>
         Effect.succeed(kernelActive ? Option.some({} as never) : Option.none()),
+      streamSelectionChanges: () => Stream.empty,
       snapshot: () =>
         Effect.succeed({
           controllers: [],
