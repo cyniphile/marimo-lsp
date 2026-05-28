@@ -71,6 +71,10 @@ function getKernelApi(extension) {
 function commandAvailable(command) {
   const result = spawnSync(command, ["-e", "process.exit(0)"], {
     stdio: "ignore",
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: "1",
+    },
   });
   return result.error === undefined && result.status === 0;
 }
@@ -78,9 +82,9 @@ function commandAvailable(command) {
 function resolveNodeCommand() {
   const candidates = [
     process.env.MARIMO_MCP_NODE,
+    process.execPath,
     process.env.NODE,
     "node",
-    process.execPath,
   ].filter(Boolean);
 
   for (const command of candidates) {
@@ -121,6 +125,7 @@ async function waitFor(label, predicate, timeoutMs = 10000, intervalMs = 100) {
   let lastError;
   while (Date.now() - start < timeoutMs) {
     try {
+      // oxlint-disable-next-line no-await-in-loop: intentional polling helper
       const value = await predicate();
       if (value) {
         return value;
@@ -128,6 +133,7 @@ async function waitFor(label, predicate, timeoutMs = 10000, intervalMs = 100) {
     } catch (error) {
       lastError = error;
     }
+    // oxlint-disable-next-line no-await-in-loop: intentional polling helper
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   if (lastError) {
@@ -158,6 +164,7 @@ function getJsonPayload(result) {
   } catch (error) {
     throw new Error(
       `Expected JSON tool payload, got:\n${text}\n\nError: ${String(error)}`,
+      { cause: error },
     );
   }
 }
@@ -239,6 +246,7 @@ async function openTempMarimoNotebook() {
   });
 
   return {
+    tempDir,
     notebook,
     notebookEditor,
     cleanup: async () => {
@@ -264,6 +272,7 @@ async function selectKernelForNotebook(notebookEditor) {
   } catch (error) {
     throw new Error(
       `Failed to select expected marimo kernel '${MARIMO_SANDBOX_KERNEL_ID}' from '${MARIMO_EXTENSION_ID}'. ${String(error)}`,
+      { cause: error },
     );
   }
 }
@@ -287,6 +296,7 @@ async function waitForActiveKernel(extension, notebook, notebookEditor) {
   } catch (error) {
     throw new Error(
       `Expected active marimo kernel '${MARIMO_SANDBOX_KERNEL_ID}' for notebook ${notebook.uri.toString()}, but no active kernel became available. ${String(error)}`,
+      { cause: error },
     );
   }
 }
@@ -303,7 +313,7 @@ suite("marimo MCP extension-host integration", () => {
     await waitForSocketReady();
     const mcp = await connectMcpClient(extension);
     const mcpConfig = vscode.workspace.getConfiguration("marimo.mcp");
-    const originalEnableRun = mcpConfig.get("enableRun");
+    const originalEnableRun = mcpConfig.inspect("enableRun")?.globalValue;
 
     try {
       // Start from a known secure baseline regardless of persisted user-data.
@@ -311,6 +321,15 @@ suite("marimo MCP extension-host integration", () => {
         "enableRun",
         false,
         vscode.ConfigurationTarget.Global,
+      );
+      await assert.rejects(
+        () =>
+          mcpConfig.update(
+            "enableRun",
+            true,
+            vscode.ConfigurationTarget.Workspace,
+          ),
+        /User settings/,
       );
       await new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -352,10 +371,17 @@ suite("marimo MCP extension-host integration", () => {
 
       assert.strictEqual(target.uri, opened.notebook.uri.toString());
       assert.ok(target.cellCount >= 1);
+      assert.strictEqual(typeof target.window_id, "string");
+      assert.ok(target.window_id.length > 0);
+
+      const targetArgs = {
+        notebook_uri: target.uri,
+        window_id: target.window_id,
+      };
 
       const statusResult = await mcp.client.callTool({
         name: "get_notebook_status",
-        arguments: { notebook_uri: target.uri },
+        arguments: targetArgs,
       });
       const status = getJsonPayload(statusResult);
       assert.ok(Array.isArray(status.cells));
@@ -364,28 +390,28 @@ suite("marimo MCP extension-host integration", () => {
 
       const variablesResult = await mcp.client.callTool({
         name: "get_variables",
-        arguments: { notebook_uri: target.uri },
+        arguments: targetArgs,
       });
       const variables = getJsonPayload(variablesResult);
       assert.ok(Array.isArray(variables));
 
       const variableValuesResult = await mcp.client.callTool({
         name: "get_variable_values",
-        arguments: { notebook_uri: target.uri },
+        arguments: targetArgs,
       });
       const variableValues = getJsonPayload(variableValuesResult);
       assert.ok(Array.isArray(variableValues));
 
       const tablesResult = await mcp.client.callTool({
         name: "get_tables",
-        arguments: { notebook_uri: target.uri },
+        arguments: targetArgs,
       });
       const tables = getJsonPayload(tablesResult);
       assert.ok(Array.isArray(tables));
 
       const outputsResult = await mcp.client.callTool({
         name: "get_cell_outputs",
-        arguments: { notebook_uri: target.uri },
+        arguments: targetArgs,
       });
       const outputs = getJsonPayload(outputsResult);
       assert.ok(Array.isArray(outputs));
@@ -395,7 +421,7 @@ suite("marimo MCP extension-host integration", () => {
 
       const runStaleResult = await mcp.client.callTool({
         name: "run_stale",
-        arguments: { notebook_uri: target.uri },
+        arguments: targetArgs,
       });
       const runStale = getJsonPayload(runStaleResult);
       assert.notStrictEqual(runStaleResult.isError, true);
@@ -405,7 +431,7 @@ suite("marimo MCP extension-host integration", () => {
 
       const runCellsResult = await mcp.client.callTool({
         name: "run_cells",
-        arguments: { notebook_uri: target.uri, cell_indices: [0] },
+        arguments: { ...targetArgs, cell_indices: [0] },
       });
       const runCells = getJsonPayload(runCellsResult);
       assert.notStrictEqual(runCellsResult.isError, true);
@@ -423,7 +449,7 @@ suite("marimo MCP extension-host integration", () => {
 
       const runCellsEnabledResult = await mcp.client.callTool({
         name: "run_cells",
-        arguments: { notebook_uri: target.uri, cell_indices: [0] },
+        arguments: { ...targetArgs, cell_indices: [0] },
       });
       const runCellsEnabled = getJsonPayload(runCellsEnabledResult);
       assert.notStrictEqual(runCellsEnabledResult.isError, true);
@@ -435,7 +461,7 @@ suite("marimo MCP extension-host integration", () => {
         async () => {
           const statusResult = await mcp.client.callTool({
             name: "get_notebook_status",
-            arguments: { notebook_uri: target.uri },
+            arguments: targetArgs,
           });
           if (statusResult.isError) {
             return null;
@@ -453,7 +479,7 @@ suite("marimo MCP extension-host integration", () => {
         async () => {
           const statusResult = await mcp.client.callTool({
             name: "get_notebook_status",
-            arguments: { notebook_uri: target.uri },
+            arguments: targetArgs,
           });
           if (statusResult.isError) {
             return null;
@@ -471,7 +497,7 @@ suite("marimo MCP extension-host integration", () => {
         async () => {
           const outputsResult = await mcp.client.callTool({
             name: "get_cell_outputs",
-            arguments: { notebook_uri: target.uri },
+            arguments: targetArgs,
           });
           if (outputsResult.isError) {
             return null;
@@ -496,7 +522,7 @@ suite("marimo MCP extension-host integration", () => {
 
       const runStaleEnabledResult = await mcp.client.callTool({
         name: "run_stale",
-        arguments: { notebook_uri: target.uri },
+        arguments: targetArgs,
       });
       const runStaleEnabled = getJsonPayload(runStaleEnabledResult);
       assert.notStrictEqual(runStaleEnabledResult.isError, true);
@@ -514,6 +540,7 @@ suite("marimo MCP extension-host integration", () => {
       if (stderr.trim().length > 0) {
         throw new Error(
           `${String(error)}\n\nMCP command: ${mcp.command}\nMCP CLI stderr:\n${stderr}`,
+          { cause: error },
         );
       }
       throw error;

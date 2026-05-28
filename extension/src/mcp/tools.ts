@@ -51,7 +51,7 @@ function findOpenNotebook(notebookUri: NotebookId) {
       }
     }
 
-    return Option.none<MarimoNotebookDocument>();
+    return Option.none();
   });
 }
 
@@ -90,7 +90,7 @@ function checkNotebookRunnable(notebook: MarimoNotebookDocument) {
 /**
  * List all open marimo notebooks
  */
-export function listNotebooks() {
+export function listNotebooks(windowId: string) {
   return Effect.gen(function* () {
     const code = yield* VsCode;
     const notebookDocs = yield* code.workspace.getNotebookDocuments();
@@ -108,6 +108,7 @@ export function listNotebooks() {
         uri: notebook.id,
         name,
         cellCount: notebook.cellCount,
+        window_id: windowId,
       });
     }
 
@@ -379,11 +380,7 @@ type ExecutionState = "pending" | "running" | "completed" | "none";
  * Try to get execution states from the registry with a timeout.
  * Returns empty map if ExecutionRegistry isn't available or times out.
  */
-function tryGetExecutionStates(): Effect.Effect<
-  Map<string, ExecutionState>,
-  never,
-  never
-> {
+function tryGetExecutionStates(): Effect.Effect<Map<string, ExecutionState>> {
   return Effect.serviceOption(ExecutionRegistry).pipe(
     Effect.flatMap((registryOpt) =>
       Option.match(registryOpt, {

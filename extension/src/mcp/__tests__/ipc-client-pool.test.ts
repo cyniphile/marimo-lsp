@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
+
 import {
   afterEach,
   beforeEach,
@@ -11,7 +12,8 @@ import {
   type Mock,
   vi,
 } from "vitest";
-import type { IpcRequest, IpcResponseBody } from "../types.ts";
+
+import type { IpcRequest, IpcResponseBody, NotebookInfo } from "../types.ts";
 
 // Mock discoverSockets so we control which socket paths the pool sees
 vi.mock("../ipc-client.ts", async (importOriginal) => {
@@ -22,9 +24,9 @@ vi.mock("../ipc-client.ts", async (importOriginal) => {
   };
 });
 
+import { IpcClientPool } from "../ipc-client-pool.ts";
 // Import after mock setup
 import { discoverSockets } from "../ipc-client.ts";
-import { IpcClientPool } from "../ipc-client-pool.ts";
 
 const mockedDiscoverSockets = discoverSockets as Mock;
 
@@ -89,6 +91,19 @@ function popMockServerOrThrow(mockServers: MockServer[]): MockServer {
   return server;
 }
 
+function notebookInfo(
+  uri: string,
+  windowId: string,
+  cellCount = 1,
+): NotebookInfo {
+  return {
+    uri,
+    name: uri.split("/").pop() ?? uri,
+    cellCount,
+    window_id: windowId,
+  };
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────
 
 describe("IpcClientPool", () => {
@@ -102,9 +117,7 @@ describe("IpcClientPool", () => {
   });
 
   afterEach(async () => {
-    for (const ms of mockServers) {
-      await shutdownServer(ms);
-    }
+    await Promise.all(mockServers.map((ms) => shutdownServer(ms)));
     fs.rmSync(tmpDir, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
@@ -175,11 +188,11 @@ describe("IpcClientPool", () => {
     it("sends to all connected servers and returns paired results", async () => {
       const sp1 = await startServer("ext1", () => ({
         type: "list_notebooks",
-        notebooks: [{ uri: "file:///a.py", name: "a.py", cellCount: 1 }],
+        notebooks: [notebookInfo("file:///a.py", "window-a", 1)],
       }));
       const sp2 = await startServer("ext2", () => ({
         type: "list_notebooks",
-        notebooks: [{ uri: "file:///b.py", name: "b.py", cellCount: 2 }],
+        notebooks: [notebookInfo("file:///b.py", "window-b", 2)],
       }));
 
       mockedDiscoverSockets.mockReturnValue([sp1, sp2]);
@@ -331,9 +344,7 @@ describe("IpcClientPool", () => {
       await pool.refresh();
 
       // Prime the cache
-      pool.updateRoutes(sp1, [
-        { uri: "file:///a.py", name: "a.py", cellCount: 1 },
-      ]);
+      pool.updateRoutes(sp1, [notebookInfo("file:///a.py", "window-a", 1)]);
 
       // Shut down the first server (destroys connections so client gets error)
       await shutdownServer(popMockServerOrThrow(mockServers));
@@ -415,9 +426,7 @@ describe("IpcClientPool", () => {
       mockedDiscoverSockets.mockReturnValue([sp1, sp2]);
       const pool = new IpcClientPool();
       await pool.refresh();
-      pool.updateRoutes(sp1, [
-        { uri: "file:///a.py", name: "a.py", cellCount: 1 },
-      ]);
+      pool.updateRoutes(sp1, [notebookInfo("file:///a.py", "window-a", 1)]);
 
       const res = await pool.requestOne({
         type: "get_variables",
@@ -429,6 +438,124 @@ describe("IpcClientPool", () => {
         expect(res.message).toBe("backend exploded");
       }
       expect(ext2Requests).toBe(0);
+    });
+
+    it("routes directly to the requested window_id", async () => {
+      let ext1Requests = 0;
+      let ext2Requests = 0;
+      const sp1 = await startServer("ext1", (req) => {
+        ext1Requests++;
+        if (
+          req.type === "get_variables" &&
+          req.notebook_uri === "file:///shared.py"
+        ) {
+          return {
+            type: "get_variables",
+            variables: [{ name: "wrong", declared_by: [], used_by: [] }],
+          };
+        }
+        return { type: "error", message: "Notebook not found" };
+      });
+      const sp2 = await startServer("ext2", (req) => {
+        ext2Requests++;
+        if (
+          req.type === "get_variables" &&
+          req.notebook_uri === "file:///shared.py"
+        ) {
+          return {
+            type: "get_variables",
+            variables: [{ name: "right", declared_by: [], used_by: [] }],
+          };
+        }
+        return { type: "error", message: "Notebook not found" };
+      });
+
+      mockedDiscoverSockets.mockReturnValue([sp1, sp2]);
+      const pool = new IpcClientPool();
+      await pool.refresh();
+      pool.updateRoutes(sp1, [notebookInfo("file:///shared.py", "window-a")]);
+      pool.updateRoutes(sp2, [notebookInfo("file:///shared.py", "window-b")]);
+
+      const res = await pool.requestOne({
+        type: "get_variables",
+        notebook_uri: "file:///shared.py",
+        window_id: "window-b",
+      });
+
+      expect(res.type).toBe("get_variables");
+      if (res.type === "get_variables") {
+        expect(res.variables[0].name).toBe("right");
+      }
+      expect(ext1Requests).toBe(0);
+      expect(ext2Requests).toBe(1);
+    });
+
+    it("returns a helpful error for an unknown window_id", async () => {
+      const sp1 = await startServer("ext1", () => ({
+        type: "list_notebooks",
+        notebooks: [notebookInfo("file:///a.py", "window-a")],
+      }));
+
+      mockedDiscoverSockets.mockReturnValue([sp1]);
+      const pool = new IpcClientPool();
+      await pool.refresh();
+      pool.updateRoutes(sp1, [notebookInfo("file:///a.py", "window-a")]);
+
+      const res = await pool.requestOne({
+        type: "get_variables",
+        notebook_uri: "file:///a.py",
+        window_id: "missing-window",
+      });
+
+      expect(res.type).toBe("error");
+      if (res.type === "error") {
+        expect(res.message).toContain("missing-window");
+        expect(res.message).toContain("window_id");
+      }
+    });
+
+    it("returns an ambiguity error when the same notebook is open in multiple windows", async () => {
+      const sp1 = await startServer("ext1", (req) => {
+        if (
+          req.type === "get_variables" &&
+          req.notebook_uri === "file:///shared.py"
+        ) {
+          return {
+            type: "get_variables",
+            variables: [{ name: "x", declared_by: [], used_by: [] }],
+          };
+        }
+        return { type: "error", message: "Notebook not found" };
+      });
+      const sp2 = await startServer("ext2", (req) => {
+        if (
+          req.type === "get_variables" &&
+          req.notebook_uri === "file:///shared.py"
+        ) {
+          return {
+            type: "get_variables",
+            variables: [{ name: "y", declared_by: [], used_by: [] }],
+          };
+        }
+        return { type: "error", message: "Notebook not found" };
+      });
+
+      mockedDiscoverSockets.mockReturnValue([sp1, sp2]);
+      const pool = new IpcClientPool();
+      await pool.refresh();
+      pool.updateRoutes(sp1, [notebookInfo("file:///shared.py", "window-a")]);
+      pool.updateRoutes(sp2, [notebookInfo("file:///shared.py", "window-b")]);
+
+      const res = await pool.requestOne({
+        type: "get_variables",
+        notebook_uri: "file:///shared.py",
+      });
+
+      expect(res.type).toBe("error");
+      if (res.type === "error") {
+        expect(res.message).toContain("multiple VS Code windows");
+        expect(res.message).toContain("window_id");
+      }
     });
   });
 
@@ -469,9 +596,7 @@ describe("IpcClientPool", () => {
       await pool.refresh();
 
       // Pre-cache the route to ext1
-      pool.updateRoutes(sp1, [
-        { uri: "file:///a.py", name: "a.py", cellCount: 1 },
-      ]);
+      pool.updateRoutes(sp1, [notebookInfo("file:///a.py", "window-a", 1)]);
 
       const res = await pool.requestOne({
         type: "get_variables",

@@ -16,10 +16,22 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { IpcRequestBody, NotebookInfo } from "./mcp/ipc-client.ts";
+
 import { IpcClientPool } from "./mcp/ipc-client-pool.ts";
+import type { IpcRequestBody, NotebookInfo } from "./mcp/ipc-client.ts";
 
 // ── MCP Server ─────────────────────────────────────────────────────────────
+
+const notebookUriProperty = {
+  type: "string",
+  description: "The URI of the notebook (from list_notebooks output)",
+} as const;
+
+const windowIdProperty = {
+  type: "string",
+  description:
+    "Optional opaque per-window token from list_notebooks. Provide this when the same notebook URI is open in multiple VS Code windows.",
+} as const;
 
 const mcpServer = new Server(
   {
@@ -51,7 +63,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "list_notebooks",
         description:
-          "List all open marimo notebooks in VS Code. Returns an array of notebook URIs, names, and cell counts.",
+          "List all open marimo notebooks in VS Code. Returns notebook URIs, names, cell counts, and window_id values for disambiguating the same notebook across multiple VS Code windows.",
         inputSchema: {
           type: "object" as const,
           properties: {},
@@ -65,11 +77,8 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object" as const,
           properties: {
-            notebook_uri: {
-              type: "string",
-              description:
-                "The URI of the notebook (from list_notebooks output)",
-            },
+            notebook_uri: notebookUriProperty,
+            window_id: windowIdProperty,
           },
           required: ["notebook_uri"],
         },
@@ -81,11 +90,8 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object" as const,
           properties: {
-            notebook_uri: {
-              type: "string",
-              description:
-                "The URI of the notebook (from list_notebooks output)",
-            },
+            notebook_uri: notebookUriProperty,
+            window_id: windowIdProperty,
           },
           required: ["notebook_uri"],
         },
@@ -97,11 +103,8 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object" as const,
           properties: {
-            notebook_uri: {
-              type: "string",
-              description:
-                "The URI of the notebook (from list_notebooks output)",
-            },
+            notebook_uri: notebookUriProperty,
+            window_id: windowIdProperty,
           },
           required: ["notebook_uri"],
         },
@@ -113,11 +116,8 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object" as const,
           properties: {
-            notebook_uri: {
-              type: "string",
-              description:
-                "The URI of the notebook (from list_notebooks output)",
-            },
+            notebook_uri: notebookUriProperty,
+            window_id: windowIdProperty,
           },
           required: ["notebook_uri"],
         },
@@ -129,11 +129,8 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object" as const,
           properties: {
-            notebook_uri: {
-              type: "string",
-              description:
-                "The URI of the notebook (from list_notebooks output)",
-            },
+            notebook_uri: notebookUriProperty,
+            window_id: windowIdProperty,
           },
           required: ["notebook_uri"],
         },
@@ -145,11 +142,8 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object" as const,
           properties: {
-            notebook_uri: {
-              type: "string",
-              description:
-                "The URI of the notebook (from list_notebooks output)",
-            },
+            notebook_uri: notebookUriProperty,
+            window_id: windowIdProperty,
             cell_indices: {
               type: "array",
               items: { type: "number" },
@@ -167,11 +161,8 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object" as const,
           properties: {
-            notebook_uri: {
-              type: "string",
-              description:
-                "The URI of the notebook (from list_notebooks output)",
-            },
+            notebook_uri: notebookUriProperty,
+            window_id: windowIdProperty,
           },
           required: ["notebook_uri"],
         },
@@ -209,7 +200,11 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     // ── notebook-specific tools: route to the right window ──
-    let body: IpcRequestBody & { notebook_uri: string };
+    let body: IpcRequestBody & { notebook_uri: string; window_id?: string };
+    const notebookTarget = args as {
+      notebook_uri: string;
+      window_id?: string;
+    };
 
     switch (name) {
       case "get_variables":
@@ -220,19 +215,17 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "run_stale":
         body = {
           type: name,
-          notebook_uri: (args as { notebook_uri: string }).notebook_uri,
-        } as IpcRequestBody & { notebook_uri: string };
+          notebook_uri: notebookTarget.notebook_uri,
+          window_id: notebookTarget.window_id,
+        };
         break;
 
       case "run_cells":
         body = {
           type: "run_cells",
-          notebook_uri: (
-            args as { notebook_uri: string; cell_indices: number[] }
-          ).notebook_uri,
-          cell_indices: (
-            args as { notebook_uri: string; cell_indices: number[] }
-          ).cell_indices,
+          notebook_uri: notebookTarget.notebook_uri,
+          window_id: notebookTarget.window_id,
+          cell_indices: (args as { cell_indices: number[] }).cell_indices,
         };
         break;
 

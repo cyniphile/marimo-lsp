@@ -12,6 +12,7 @@ export interface NotebookInfo {
   uri: string;
   name: string;
   cellCount: number;
+  window_id: string;
 }
 
 /**
@@ -103,18 +104,23 @@ export interface NotebookStatus {
   stale_count: number;
 }
 
+interface NotebookTarget {
+  notebook_uri: string;
+  window_id?: string;
+}
+
 /**
  * IPC request body types (without the id field)
  */
 export type IpcRequestBody =
   | { type: "list_notebooks" }
-  | { type: "get_variables"; notebook_uri: string }
-  | { type: "get_variable_values"; notebook_uri: string }
-  | { type: "get_tables"; notebook_uri: string }
-  | { type: "get_cell_outputs"; notebook_uri: string }
-  | { type: "get_notebook_status"; notebook_uri: string }
-  | { type: "run_stale"; notebook_uri: string }
-  | { type: "run_cells"; notebook_uri: string; cell_indices: number[] };
+  | ({ type: "get_variables" } & NotebookTarget)
+  | ({ type: "get_variable_values" } & NotebookTarget)
+  | ({ type: "get_tables" } & NotebookTarget)
+  | ({ type: "get_cell_outputs" } & NotebookTarget)
+  | ({ type: "get_notebook_status" } & NotebookTarget)
+  | ({ type: "run_stale" } & NotebookTarget)
+  | ({ type: "run_cells"; cell_indices: number[] } & NotebookTarget);
 
 /**
  * IPC request with id for request/response correlation

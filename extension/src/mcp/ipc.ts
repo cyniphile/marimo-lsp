@@ -14,6 +14,7 @@ import {
   discoverSockets,
   getSocketDir,
   getSocketPath,
+  getWindowId,
   type IpcRequest,
   type IpcRequestBody,
   type IpcResponse,
@@ -72,14 +73,42 @@ export {
 
 type IpcServerDeps = VariablesService | DatasourcesService | VsCode;
 
+const RUN_DISABLED_MESSAGE =
+  "Cell execution is disabled. Enable 'marimo.mcp.enableRun' in local user settings to allow MCP clients to execute notebook cells.";
+
+export function isMcpRunEnabledFromInspection(
+  inspected:
+    | {
+        globalValue?: boolean;
+        workspaceValue?: boolean;
+        workspaceFolderValue?: boolean;
+      }
+    | null
+    | undefined,
+): boolean {
+  // Ignore workspace and folder values so a checked-in workspace setting
+  // cannot silently enable MCP execution for a user.
+  return inspected?.globalValue === true;
+}
+
+function isMcpRunEnabled() {
+  return Effect.gen(function* () {
+    const code = yield* VsCode;
+    const config = yield* code.workspace.getConfiguration("marimo.mcp");
+    const inspected = config.inspect<boolean>("enableRun");
+
+    return isMcpRunEnabledFromInspection(inspected);
+  });
+}
+
 /**
  * Handle an IPC request and return a response body
  */
-function handleRequestBody(request: IpcRequestBody) {
+function handleRequestBody(request: IpcRequestBody, windowId: string) {
   return Effect.gen(function* () {
     switch (request.type) {
       case "list_notebooks": {
-        const notebooks = yield* listNotebooks();
+        const notebooks = yield* listNotebooks(windowId);
         return { type: "list_notebooks" as const, notebooks };
       }
       case "get_variables": {
@@ -141,17 +170,11 @@ function handleRequestBody(request: IpcRequestBody) {
         return { type: "get_notebook_status" as const, status };
       }
       case "run_stale": {
-        // Check if run is enabled in settings (disabled by default for security)
-        const code = yield* VsCode;
-        const config = yield* code.workspace.getConfiguration("marimo.mcp");
-        const enableRun = config.get<boolean>("enableRun") ?? false;
-
-        if (!enableRun) {
+        if (!(yield* isMcpRunEnabled())) {
           const result: RunStaleResult = {
             success: false,
             cells_triggered: 0,
-            error:
-              "Cell execution is disabled. Enable 'marimo.mcp.enableRun' in VS Code settings to allow MCP clients to execute notebook cells.",
+            error: RUN_DISABLED_MESSAGE,
           };
           return { type: "run_stale" as const, result };
         }
@@ -160,17 +183,11 @@ function handleRequestBody(request: IpcRequestBody) {
         return { type: "run_stale" as const, result };
       }
       case "run_cells": {
-        // Check if run is enabled in settings (disabled by default for security)
-        const code = yield* VsCode;
-        const config = yield* code.workspace.getConfiguration("marimo.mcp");
-        const enableRun = config.get<boolean>("enableRun") ?? false;
-
-        if (!enableRun) {
+        if (!(yield* isMcpRunEnabled())) {
           const result: RunCellsResult = {
             success: false,
             cells_triggered: 0,
-            error:
-              "Cell execution is disabled. Enable 'marimo.mcp.enableRun' in VS Code settings to allow MCP clients to execute notebook cells.",
+            error: RUN_DISABLED_MESSAGE,
           };
           return { type: "run_cells" as const, result };
         }
@@ -237,6 +254,7 @@ function cleanupStaleSockets() {
 export function createIpcServer(sessionId: string) {
   return Effect.gen(function* () {
     const socketPath = getSocketPath(sessionId);
+    const windowId = getWindowId(sessionId);
 
     // Ensure socket directory exists (Unix only, no-op for env override)
     if (!process.env.MARIMO_MCP_SOCKET && process.platform !== "win32") {
@@ -291,7 +309,7 @@ export function createIpcServer(sessionId: string) {
       Effect.gen(function* () {
         while (true) {
           const socket = yield* Queue.take(connectionQueue);
-          yield* Effect.fork(handleConnection(socket, runtime));
+          yield* Effect.fork(handleConnection(socket, runtime, windowId));
         }
       }),
     );
@@ -321,6 +339,7 @@ export function createIpcServer(sessionId: string) {
 function handleConnection(
   socket: net.Socket,
   runtime: Runtime.Runtime<IpcServerDeps>,
+  windowId: string,
 ) {
   return Effect.gen(function* () {
     let buffer = "";
@@ -351,6 +370,7 @@ function handleConnection(
                   const { id, ...body } = request;
                   const responseBody = yield* handleRequestBody(
                     body as IpcRequestBody,
+                    windowId,
                   );
                   const response: IpcResponse = { ...responseBody, id };
                   socket.write(`${JSON.stringify(response)}\n`);

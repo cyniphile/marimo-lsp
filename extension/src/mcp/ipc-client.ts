@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
+
 import type {
   CellOutput,
   CellStatus,
@@ -55,6 +56,10 @@ function getSessionToken(sessionId: string): string {
     .update(sessionId)
     .digest("hex")
     .slice(0, SESSION_TOKEN_LENGTH);
+}
+
+export function getWindowId(sessionId: string): string {
+  return getSessionToken(sessionId);
 }
 
 function getWindowsSocketMarkerPath(sessionId: string): string {
@@ -143,7 +148,7 @@ export function getSocketPath(sessionId?: string): string {
   if (process.platform === "win32") {
     if (sessionId) {
       // Keep pipe names short and deterministic to avoid platform path limits.
-      return `\\\\.\\pipe\\marimo-mcp-${uid}-${getSessionToken(sessionId)}`;
+      return `\\\\.\\pipe\\marimo-mcp-${uid}-${getWindowId(sessionId)}`;
     }
     return `\\\\.\\pipe\\marimo-mcp-${uid}`;
   }
@@ -151,7 +156,7 @@ export function getSocketPath(sessionId?: string): string {
   // Unix domain socket
   if (sessionId) {
     // Use a compact token because full VS Code session IDs can exceed sun_path limits.
-    return path.join(getSocketDir(), `${getSessionToken(sessionId)}.sock`);
+    return path.join(getSocketDir(), `${getWindowId(sessionId)}.sock`);
   }
   return path.join(os.tmpdir(), `marimo-mcp-${uid}.sock`);
 }

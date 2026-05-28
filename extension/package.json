@@ -26,7 +26,6 @@
     "embed-sdist": "node scripts/embed-sdist.mjs"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
     "@effect/language-service": "^0.45.0",
     "@effect/platform": "^0.92.1",
     "@effect/platform-node": "^0.98.3",
@@ -34,6 +33,7 @@
     "@marimo-team/frontend": "link:../../marimo/frontend",
     "@marimo-team/openapi": "link:../../marimo/packages/openapi",
     "@marimo-team/smart-cells": "link:../../marimo/packages/smart-cells",
+    "@modelcontextprotocol/sdk": "^1.12.1",
     "@oxlint/plugins": "^1.64.0",
     "@sentry/node": "^9.47.1",
     "@std/semver": "jsr:^1.0.6",
@@ -120,7 +120,8 @@
         "marimo.mcp.enableRun": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "**Security:** Allow the MCP server to execute notebook cells via the `run_stale` and `run_cells` tools. When disabled (default), MCP clients like Claude Code can only read notebook data. Enable this only if you trust your MCP clients to execute code."
+          "markdownDescription": "**Security:** Allow the MCP server to execute notebook cells via the `run_stale` and `run_cells` tools. When disabled (default), MCP clients like Claude Code can only read notebook data. This can only be enabled from local user settings. Enable it only if you trust your MCP clients to execute code.",
+          "scope": "machine"
         }
       }
     },
